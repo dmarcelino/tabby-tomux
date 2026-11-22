@@ -7,6 +7,9 @@ node_modules/
 dist/
 typings/
 
+# Local tool caches
+.codegraph/
+
 # Editor swap and backup files
 *.swp
 *.swo
