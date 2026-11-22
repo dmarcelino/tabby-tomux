@@ -21,7 +21,11 @@ Status: early development, tested against Tabby 1.0.238 and tmux 3.5a.
 - **One tab per tmux window, one pane per tab.** Each tomux tab shows one window of the tmux session. If a window has several tmux panes, the tab shows the active pane and the others keep running.
 - **Opening the profile:** if the session doesn't exist, tomux creates it and the tab shows its first window. If it exists, the tab shows its lowest-numbered window, and the session's other windows open as extra tabs. Once connected, opening the profile again creates a new window.
 - **Windows created elsewhere** (tmux's new-window key, another computer) open as new tabs.
-- **Titles:** a tab shows its tmux window's name, or `tmux:<index>`. Renaming in tmux renames the tab. Renaming the tab in Tabby renames the tmux window.
+- **Titles:** a tab shows its tmux window's name. Renaming in tmux renames the tab. Renaming the tab in Tabby renames the tmux window.
+  - A window you haven't named is called `tmux:<index>`. Its tab shows the title the program in it sets, as a local terminal tab does. Claude Code, for example, names the tab after its task. tomux never copies that title into tmux.
+  - A name you gave the window wins over the program's title. To make the tab follow the program again, rename it to `tmux:<index>`, in Tabby or in tmux.
+  - If your shell sets the terminal title at every prompt (many bash and zsh setups do), unnamed tabs show that title, for example `user@host: ~/src`, instead of `tmux:<index>`. To keep `tmux:<index>`, turn on **Disable dynamic tab title** in the tomux profile.
+  - After a reconnect, a restart or a pane switch, the tab shows the title tmux remembers for the active pane.
 - **Tabby's tab hotkeys** (next/previous tab, go to tab N, move tab) work as usual. Moving a tab doesn't reorder windows in tmux.
 
 ### Closing and restoring

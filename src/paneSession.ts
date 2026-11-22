@@ -7,6 +7,7 @@
 import { Logger } from 'tabby-core'
 import { BaseSession } from 'tabby-terminal'
 import { OutputGate } from './outputGate'
+import { paneSwitchMarker } from './tabTitle'
 import type { TomuxConnection } from './tmux/connection'
 import { CommandFlags, TmuxPaneOutput } from './tmux/controlClient'
 import { PaneOutputNormalizer } from './tmux/paneOutput'
@@ -58,12 +59,16 @@ export class TomuxPaneSession extends BaseSession {
         }
     }
 
-    /** Follow a different pane of the same window (tmux's active pane changed). */
+    /**
+     * Follow a different pane of the same window (tmux's active pane changed).
+     * The redraw starts with `paneSwitchMarker(paneId)`.
+     */
     switchPane (paneId: string): void {
         this.gate.hold()
         this.paneIdValue = paneId
         void this.captureSnapshot(paneId).then(snap => {
-            this.gate.open('\x1b[2J\x1b[3J\x1b[H' + (snap ?? ''))
+            // The marker tells the tab's title logic where the new pane's output starts.
+            this.gate.open(paneSwitchMarker(paneId) + '\x1b[2J\x1b[3J\x1b[H' + (snap ?? ''))
         })
     }
 

@@ -68,3 +68,34 @@ Unit tests were added for each fix (275 tests in total). Then these end-to-end c
 Items 7 (SSH channel cleanup), 9 (no hang after the connection ends), 15 (title echo), 17 (reopen is not closed) and 18 (failed claim) are covered by unit tests only.
 
 tomux now logs every tmux window it kills, with the reason, in Tabby's `log.txt`. Two windows of the test session disappeared at an unknown point between earlier runs. Repeating the suspect sequence (restore, a second Tabby window, closing it, quitting) killed nothing. The likeliest cause is tabs closed by hand while Tabby was open on screen, which kills by design.
+
+## Program titles (change show-app-titles, task 5.2), 2026-11-22
+
+Setup as in the reliability pass: Tabby 1.0.238 on macOS, test host with tmux 3.5a, Tabby driven through its DevTools port with `TOMUX_DEV=1`. Claude Code is not installed on the test host, so program titles were set with `printf '\033]0;<title>\007'`, the sequence Claude Code and shell prompts use. The host's bash prompt sets no title inside tmux.
+
+| Check | Result |
+|---|---|
+| Program title on an unnamed window | The tab and its split container showed `fix login bug`. The tmux window name stayed `tmux:15`. An empty title returned the tab to `tmux:15`. |
+| A name given in tmux | `rename-window api2` showed `api2`, and a later program title did not replace it. Renaming back to `tmux:15` in tmux showed the latest program title again. |
+| Tabby rename to the shown program title | Renamed the tmux window to `fix login bug`, cleared Tabby's custom title, and later program titles no longer changed the tab. **Failed at first**: `titleChange$` drops a custom title equal to the title shown. Fixed by also listening to `recoveryStateChangedHint$`, then passed. |
+| Tabby rename to `tmux:15` | The tab followed the program title again. |
+| Reconnect | The tab came back to the same window with the same title. |
+| Restart | A restored tab not yet shown, whose pane title had been changed in tmux while it was not attached, showed that title when first shown. |
+| Pane switch inside tmux | `split-window`: the untitled new pane showed `tmux:15`. A title set there showed. `select-pane` between the panes switched between the two titles, and `kill-pane` went back to the remaining pane's title. |
+| "Disable dynamic tab title" on the tomux profile | A tab from the profile and a tab for a window created with `new-window` in tmux both ignored program titles. Turning the toggle off again made the open tab show titles without a reconnect. |
+| Tabby split with two tomux panes | Each pane showed its own program title. The container showed both, focused pane first: `right job \| left job`. |
+
+Found while testing, not caused by this change: a restored tab that is never shown during a Tabby session saves a recovery token without its window, because `getRecoveryToken` reads `windowId`, which is set only on binding. After a second restart such tabs have no window, so tomux treats their windows as unclaimed and opens duplicate tabs for them, while the old tabs would create new windows when shown. Restarting twice in this session left 14 such tabs, which were closed by hand. No tmux window was lost.
+
+### Code-review fixes (task 6.6), 2026-11-22
+
+Same setup, with the review fixes loaded.
+
+| Check | Result |
+|---|---|
+| Pane switch while the old pane keeps printing titles (a loop setting `busy <n>` every 50 ms) | 10 switches each way: every switch to the untitled pane showed `tmux:12`, and every switch back showed `busy …`. The pane-switch marker never appeared as a title. |
+| Split of a tomux pane and a local shell, renamed `work` with the local shell focused, then the tomux pane focused and "Split right" | The split kept `work`, and the tmux window stayed `tmux:15`. The new pane's window stayed `tmux:16`. |
+| Split of two tomux panes showing `left job \| right job`, rename confirmed unedited | No window was renamed (`tmux:17`, `tmux:18`). The custom title was cleared, so the split still showed the joined titles. |
+| Lone tab, rename confirmed on the shown program title | Still pins it: the window was renamed `pin me`. |
+
+The repeated restarts of another test run in the meantime had left 28 tabs without a window (issue #1). They were closed, and every remaining tab was shown once so its window is saved on the next quit. One window of the test session was removed outside tomux during that run.

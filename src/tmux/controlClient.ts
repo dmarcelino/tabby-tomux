@@ -69,6 +69,12 @@ export interface TmuxPaneCursor {
     y: number;
 }
 
+/** tomux: `#{pane_title}` and `#{host}` of a pane, as tmux reports them. */
+export interface TmuxPaneTitle {
+    host: string;
+    title: string;
+}
+
 export interface TmuxVersion {
     major: number;
     minor: number;
@@ -433,6 +439,23 @@ export class TmuxControlClient {
             `display-message -p -t ${paneId} "#{cursor_x} #{cursor_y}"`,
         );
         return parseCursor(res[0]);
+    }
+
+    /**
+     * tomux: the title a program set for `paneId` (OSC 0/2, `#{pane_title}`)
+     * and `#{host}`, which tmux uses as the title of a pane no program has
+     * titled.  The title is the last field, so a '|' in it cannot shift the
+     * host.
+     */
+    async getPaneTitle(paneId: string): Promise<TmuxPaneTitle> {
+        const res = await this.sendCommand(
+            `display-message -p -t ${paneId} "#{host}|#{pane_title}"`,
+        );
+        const line = res[0] ?? '';
+        const sep = line.indexOf('|');
+        return sep === -1
+            ? { host: line, title: '' }
+            : { host: line.slice(0, sep), title: line.slice(sep + 1) };
     }
 
     /** Remove the incremental UTF-8 decoder for a closed pane. */

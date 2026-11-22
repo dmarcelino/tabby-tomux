@@ -103,6 +103,14 @@ describe('TomuxConnection.open', () => {
     })
 })
 
+describe('TomuxConnection pane titles', () => {
+    it('reads a program title and an untitled pane through the connection', async () => {
+        const { conn } = await openFake({ host: 'testhost', paneTitles: { '%3': 'fix login bug' } })
+        await expect(conn.client.getPaneTitle('%3')).resolves.toEqual({ host: 'testhost', title: 'fix login bug' })
+        await expect(conn.client.getPaneTitle('%4')).resolves.toEqual({ host: 'testhost', title: 'testhost' })
+    })
+})
+
 describe('TomuxConnection terminal states', () => {
     it('%exit → exited, with the reason; releases once and closes the channel', async () => {
         const { tmux, conn } = await openFake()
