@@ -80,6 +80,9 @@ export interface TmuxPaneCapture {
     text: string;
     cursorX: number;
     cursorY: number;
+    /** The pane's size when it was captured (0 when unknown). */
+    paneWidth: number;
+    paneHeight: number;
 }
 
 /** tomux: options for `ping`. */
@@ -413,7 +416,7 @@ export class TmuxControlClient {
         const [capture, cursor] = await this.sendCommandList(
             [
                 `capture-pane -p -e -J -S - -t ${paneId}`,
-                `display-message -p -t ${paneId} "#{cursor_x} #{cursor_y}"`,
+                `display-message -p -t ${paneId} "#{cursor_x} #{cursor_y} #{pane_width} #{pane_height}"`,
             ],
             CommandFlags.None,
             {
@@ -425,7 +428,14 @@ export class TmuxControlClient {
             },
         );
         const { x, y } = parseCursor(cursor[0]);
-        return { text: capture.join('\n'), cursorX: x, cursorY: y };
+        const [, , width, height] = (cursor[0] ?? '').trim().split(/\s+/u);
+        return {
+            text: capture.join('\n'),
+            cursorX: x,
+            cursorY: y,
+            paneWidth: Number.parseInt(width ?? '0', 10) || 0,
+            paneHeight: Number.parseInt(height ?? '0', 10) || 0,
+        };
     }
 
     async getPaneCursor(paneId: string): Promise<TmuxPaneCursor> {
