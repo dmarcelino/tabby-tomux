@@ -1,0 +1,24 @@
+tomux (tabby-tomux)
+Licensed under the GNU General Public License, version 3 only (GPL-3.0-only).
+See LICENSE for the full text.
+
+This project includes code ported from tmux-integrated
+  https://github.com/pcassidy75/tmux-integrated
+  Copyright (C) the tmux-integrated authors
+  Licensed under GPL-3.0-only
+  Ported from commit 0f92f4a (2026-10-10)
+
+Ported files are listed below as they are added, with the original file
+they come from. Each ported file keeps a header naming its origin.
+
+  src/tmux/gateway.ts        <- src/tmuxGateway.ts
+  src/tmux/controlClient.ts  <- src/tmuxControlClient.ts (typed operations), with
+                                parts of src/extension.ts, src/tmuxTerminalProvider.ts
+                                and src/windowTitle.ts
+  src/tmux/sendKeys.ts       <- src/tmuxTerminalProvider.ts (send-keys input encoding)
+  src/tmux/windowTitle.ts    <- src/windowTitle.ts
+  src/tmux/paneOutput.ts     <- src/tmuxTerminalProvider.ts (normalizeTerminalOutput)
+
+The build setup (webpack configuration) is modelled on tabby-tmux
+  https://github.com/ruanimal/tabby-tmux
+  Declared MIT in its package.json

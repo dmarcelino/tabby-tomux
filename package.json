@@ -1,0 +1,66 @@
+{
+    "name": "tabby-tomux",
+    "version": "0.0.1",
+    "description": "tmux control mode for Tabby: each tmux window is a native Tabby tab",
+    "keywords": [
+        "tabby-plugin"
+    ],
+    "main": "dist/index.js",
+    "typings": "typings/index.d.ts",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/dmarcelino/tabby-tomux.git"
+    },
+    "author": "dmarcelino",
+    "license": "GPL-3.0-only",
+    "scripts": {
+        "build": "webpack --color",
+        "watch": "webpack --color --watch",
+        "typecheck": "tsc --noEmit && tsc -p tsconfig.spec.json",
+        "test": "vitest run",
+        "test:watch": "vitest"
+    },
+    "files": [
+        "dist",
+        "typings",
+        "LICENSE",
+        "NOTICE"
+    ],
+    "peerDependencies": {
+        "@angular/common": "^15",
+        "@angular/core": "^15",
+        "@angular/forms": "^15",
+        "@ng-bootstrap/ng-bootstrap": "^14",
+        "rxjs": "^7",
+        "tabby-core": "*",
+        "tabby-settings": "*",
+        "tabby-terminal": "*"
+    },
+    "devDependencies": {
+        "@angular/common": "^15.2.10",
+        "@angular/compiler": "^15.2.10",
+        "@angular/compiler-cli": "^15.2.10",
+        "@angular/core": "^15.2.10",
+        "@angular/forms": "^15.2.10",
+        "@angular/platform-browser": "^15.2.10",
+        "@ng-bootstrap/ng-bootstrap": "^14.2.0",
+        "@ngtools/webpack": "^15.2.11",
+        "@types/node": "^20.3.1",
+        "babel-loader": "^10.0.0",
+        "css-loader": "^7.1.2",
+        "rxjs": "^7.8.1",
+        "sass": "^1.97.2",
+        "sass-loader": "^16.0.6",
+        "style-loader": "^4.0.0",
+        "svg-inline-loader": "^0.8.2",
+        "tabby-core": "1.0.231-nightly.0",
+        "tabby-settings": "1.0.231-nightly.0",
+        "tabby-ssh": "1.0.231-nightly.0",
+        "tabby-terminal": "1.0.231-nightly.0",
+        "to-string-loader": "^1.2.0",
+        "typescript": "~4.9.5",
+        "vitest": "^4.1.10",
+        "webpack": "^5.86.0",
+        "webpack-cli": "^5.0.1"
+    }
+}

@@ -1,0 +1,16 @@
+# Private: never commit
+chat-export.md
+.env.local
+
+# Build output and dependencies
+node_modules/
+dist/
+typings/
+
+# Editor swap and backup files
+*.swp
+*.swo
+.*.sw[a-p]
+*~
+\#*\#
+.#*
