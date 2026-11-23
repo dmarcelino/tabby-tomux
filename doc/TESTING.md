@@ -9,13 +9,13 @@ Setup: Tabby 1.0.238 on macOS. The test host runs Debian 13 with tmux 3.5a and i
 | **Heavy output:** `yes \| head -c 50M` in one tab | Finished in 28 s (about 1.8 MB/s through the port forward). Both that tab and another tab responded normally afterwards. No flow control (`pause-after`) was needed at this rate. |
 | **Network drop:** port forward killed with 8 tabs open | All 8 tabs said "Lost the connection to tmux". The host kept all 8 windows, with 0 clients attached. After the forward was restored, Reconnect brought each tab back to its own window with its scrollback, with 1 client, 8 windows and no extra tabs. |
 | **11 windows restored:** quit and relaunch | 11 tabs, all bound to 11 distinct windows. The window count stayed at 11, and each session had one client. Showing all 11 tabs took about 14 s. |
-| **Eight tabs restored** (task 9.3) | 8 tabs, 8 windows before and after, **one** shared SSH connection. The password-prompt part needs a password-protected profile and was not tested. |
+| **Eight tabs restored** (task 9.3) | 8 tabs, 8 windows before and after, **one** shared SSH connection. The password-prompt part was checked on Windows on 2026-11-23 (see below). |
 | **Two Tabby windows on one session** | The second window shows every window of the session (a known limitation), so the host had 2 clients. Closing the second window killed nothing: 11 windows remained, and the main window's 11 tabs stayed live. |
-| **Laptop sleep and resume** | **Not tested**: it can't be simulated in this setup. The network-drop test is the closest. |
+| **Laptop sleep and resume** | Not tested in this setup. It was checked on Windows on 2026-11-23 (see below). |
 
 ## Behaviour checks done against the test host
 
-These cover tasks 7.x, 8.x and 9.x in `openspec/changes/add-tomux-plugin/tasks.md`:
+These cover tasks 7.x, 8.x and 9.x in `openspec/changes/archive/2026-11-23-add-tomux-plugin/tasks.md`:
 - **Typing:** `echo "a b  c é"` arrived with the double space and the `é`. The up arrow recalled history. A 118 KB paste with UTF-8, quotes and `$` arrived byte for byte, with a matching md5.
 - **Opening the profile:**
   - A new session gets exactly one window, bound to the tab.
@@ -36,10 +36,21 @@ These cover tasks 7.x, 8.x and 9.x in `openspec/changes/add-tomux-plugin/tasks.m
 - **Renames:** tmux to tab, tab to tmux (Tabby's custom title is cleared afterwards), and two quick renames ending on the second.
 - **Shared SSH connection:** closing a plain SSH tab that shared the connection left tomux connected.
 
+## Windows checks (tasks 3.1, 9.3 and 10.1), 2026-11-23
+
+Setup: Tabby 1.0.238 on Windows (ARM64), plugin copied into `%APPDATA%\tabby\plugins\node_modules`. The user ran these checks by hand and reported that both passed. Tabby's `log.txt` shows the restores.
+
+| Check | Expected result (passed) |
+|---|---|
+| **Password login inside a tomux tab** (task 3.1): a tomux profile on an SSH profile with authentication method "Password" and no saved password | Tabby's password prompt appears inside the tomux tab. After the password, the tmux window shows a shell and typed commands run. |
+| **Eight tabs of a password profile restored** (task 9.3): 8 windows in a separate session, quit and relaunch | One password prompt for all 8 tabs. The session still has 8 windows and one client. |
+| **Laptop sleep and resume** (task 10.1): Windows put to sleep for a few minutes with tomux tabs open | The tabs either stay live or offer a reconnect. A key press brings each one back to its own window, with the same window count, one client and no extra tabs. |
+
+Everyday use on Windows over several days also covered restoring tabs after a restart (logged with sizes, captures and screen state since PR #2), opening new windows and typing.
+
 ## Not yet verified
 
-- A password or keyboard-interactive login completing inside a tomux tab (tasks 3.1 and 9.3). The test host uses key login, and keyboard-interactive login is disabled on it.
-- Windows, the main target platform. Everything above ran on macOS.
+- The heavy-output, network-drop, 11-window and two-Tabby-window checks of the 2026-11-22 reliability pass were run on macOS only.
 
 ## Tabby version check (task 10.2), 2026-11-22
 
