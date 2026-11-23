@@ -7,7 +7,7 @@
  * later tabs reuse the same SSH connection; only the session differs.
  */
 import { Component, NgZone, ViewChild, ViewContainerRef } from '@angular/core'
-import { Subscription } from 'rxjs'
+import { merge, Subscription } from 'rxjs'
 import { Logger, LogService, NotificationsService, RecoveryToken } from 'tabby-core'
 import { BaseTerminalTabComponent, ConnectableTerminalTabComponent } from 'tabby-terminal'
 import { BindIntent, connectIntent, decideBinding } from '../binding'
@@ -22,10 +22,9 @@ import { SingleFlight } from '../singleFlight'
 import { TomuxConnection, TmuxVersionError } from '../tmux/connection'
 import { connectionKey } from '../tmux/connectionRegistry'
 import { CommandFlags, TmuxWindow } from '../tmux/controlClient'
-import { pickTerminalTabTitle, TabTitleSync } from '../tmux/windowTitle'
 import { ReservationKind } from '../reservations'
 import { describeScreen, ScreenLike } from '../screenReport'
-import { shouldShowRename } from '../titleEcho'
+import { customTitleAction, programTitleFromPane, TabTitleController } from '../tabTitle'
 import { TomuxService } from '../tomux.service'
 
 const tabbySsh = loadTabbySsh()
@@ -76,6 +75,12 @@ export class TomuxTabComponent extends SSHTabComponent {
     tomuxSessionName?: string
 
     enableToolbar = true
+    /**
+     * Always true, so Tabby's own handler never sets the title: program
+     * titles go through `titles`, which gives a window name of the user's own
+     * priority. The user's "Disable dynamic tab title" setting is read from
+     * the tomux profile instead (show-app-titles, design decision 5).
+     */
     disableDynamicTitle = true
     kiStep = 0
 
@@ -86,7 +91,19 @@ export class TomuxTabComponent extends SSHTabComponent {
     private connection: TomuxConnection | null = null
     private connectionKeyValue: string | null = null
     private paneSession: TomuxPaneSession | null = null
-    private titleSync = new TabTitleSync()
+    private titles = new TabTitleController({
+        showTitle: title => this.setTitle(title),
+        renameWindow: async name => {
+            if (this.connection && this.windowId) {
+                await this.connection.client.renameWindow(this.windowId, name).catch(() => null)
+            }
+        },
+        readProgramTitle: async paneId => {
+            const pane = await this.connection?.client.getPaneTitle(paneId).catch(() => null)
+            return pane ? programTitleFromPane(pane.title, pane.host) : null
+        },
+        dynamicTitles: () => !this.tomuxProfile?.disableDynamicTitle,
+    })
     private resizeTimer: ReturnType<typeof setTimeout> | null = null
     private lastSize: { columns: number, rows: number } | null = null
     private tomuxSubs: Subscription[] = []
@@ -148,6 +165,7 @@ export class TomuxTabComponent extends SSHTabComponent {
             complete: () => this.onDestroyed(false),
         })
         this.subscribeUntilDestroyed(this.focused$, () => this.onFocused())
+        this.watchProgramTitle()
         this.watchTabbyRename()
         if (this.profile?.options?.host) {
             this.reservationKey = connectionKey(this.profile as any, this.sessionName)
@@ -300,7 +318,7 @@ export class TomuxTabComponent extends SSHTabComponent {
         this.paneSession = session
         this.setSession(session)
         this.watchConnection(conn)
-        await this.settleTitle(conn, window)
+        await this.settleTitle(window)
         if (window.adopted) {
             this.tomuxLog.info(`Restoring window ${window.id}: tab size ${formatSize(this.size)}, ${this.describeTerminalSize()}`)
         }
@@ -422,9 +440,11 @@ export class TomuxTabComponent extends SSHTabComponent {
                 this.windowId = null
                 this.closeQuietly()
             } else if (event.type === 'window-renamed' && event.windowId === this.windowId) {
-                this.onWindowRenamed(event.name)
+                this.titles.onWindowRenamed(event.name)
             } else if (event.type === 'window-pane-changed' && event.windowId === this.windowId) {
-                this.paneSession?.switchPane(event.paneId)
+                const session = this.paneSession
+                session?.switchPane(event.paneId)
+                void this.titles.onPaneChanged(event.paneId, !!session)
             }
         }))
         void conn.closed.then(state => {
@@ -449,30 +469,23 @@ export class TomuxTabComponent extends SSHTabComponent {
         })
     }
 
-    // ---- titles (design D9) ----------------------------------------------
+    // ---- titles (design D9; change show-app-titles) --------------------
 
-    private async settleTitle (conn: TomuxConnection, window: BoundWindow): Promise<void> {
-        const label = pickTerminalTabTitle(window.name, window.index, window.automaticRename, false)
-        this.emitTitle(label)
-        if (window.automaticRename !== false || (window.name ?? '') !== label) {
-            this.titleSync.recordRenameSentToTmux(label)
-            await conn.client.renameWindow(window.id, label).catch(() => null)
-        }
+    private async settleTitle (window: BoundWindow): Promise<void> {
+        await this.titles.attach({ index: window.index, paneId: window.paneId, name: window.name, automaticRename: window.automaticRename })
     }
 
-    private onWindowRenamed (name: string): void {
-        if (shouldShowRename(this.titleSync, name)) {
-            this.emitTitle(name)
-        }
-    }
-
-    private emitTitle (title: string): void {
-        const t = title.trim()
-        if (!t || t === this.titleSync.lastEmittedTitle) {
+    /**
+     * The title a program in the pane sets (OSC 0/2) reaches xterm through
+     * %output. Show it as Tabby does for a local tab, subject to the
+     * window-name precedence. Nothing is sent to tmux.
+     */
+    private watchProgramTitle (): void {
+        if (!this.frontend) {
             return
         }
-        this.titleSync.recordEmission(t)
-        this.setTitle(t)
+        const zone = this.injector.get(NgZone)
+        this.subscribeUntilDestroyed(this.frontend.title$, title => zone.run(() => this.titles.onProgramTitle(title)))
     }
 
     /**
@@ -480,26 +493,37 @@ export class TomuxTabComponent extends SSHTabComponent {
      * the split container around us). Push such a rename to tmux and drop the
      * custom title, so the tab keeps following the tmux window name. In a
      * split only the focused pane handles it (review item 16).
+     *
+     * `titleChange$` drops a rename to the title the tab already shows (it is
+     * `distinctUntilChanged`), which is how a user confirms a shown program
+     * title to pin it. `setCustomTitle` always pings `recoveryStateChangedHint$`,
+     * so listen to both. That hint also fires for unrelated split events
+     * (adding, replacing or pinning tabs), so act only when the custom title
+     * actually changed: a name a split keeps on purpose (renamed while another
+     * pane was focused) is never pushed later by such an event.
      */
     private watchTabbyRename (): void {
         const top = (this as any).topmostParent ?? this
-        this.subscribeUntilDestroyed(top.titleChange$, () => {
-            const custom: string = (top.customTitle ?? '').trim()
-            if (!custom || !this.connection || !this.windowId) {
-                return
+        let seen: string = top.customTitle ?? ''
+        this.subscribeUntilDestroyed(merge(top.titleChange$, top.recoveryStateChangedHint$), () => {
+            const current: string = top.customTitle ?? ''
+            const previous = seen
+            seen = current
+            const panes: unknown[] = top !== this ? top.getAllTabs?.() ?? [this] : [this]
+            const action = customTitleAction({
+                previous,
+                current,
+                bound: !!this.connection && !!this.windowId,
+                focused: top === this || top.focusedTab === undefined || top.focusedTab === this,
+                paneCount: panes.length,
+                containerTitle: top.title ?? '',
+            })
+            if (action === 'rename') {
+                this.titles.onTabbyRename(current)
             }
-            if (top !== this && top.focusedTab !== undefined && top.focusedTab !== this) {
-                return
+            if (action !== 'ignore') {
+                top.setCustomTitle('')
             }
-            if (this.titleSync.classifyTerminalName(custom) !== 'user-rename') {
-                return
-            }
-            const conn = this.connection
-            const windowId = this.windowId
-            this.titleSync.recordRenameSentToTmux(custom)
-            this.emitTitle(custom)
-            top.setCustomTitle('')
-            void conn.client.renameWindow(windowId, custom).catch(() => null)
         })
     }
 
