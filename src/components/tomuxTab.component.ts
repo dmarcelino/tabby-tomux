@@ -8,7 +8,7 @@
  */
 import { Component, NgZone } from '@angular/core'
 import { merge, Subscription } from 'rxjs'
-import { LogService, RecoveryToken } from 'tabby-core'
+import { Logger, LogService, RecoveryToken } from 'tabby-core'
 import { BaseTerminalTabComponent, ConnectableTerminalTabComponent } from 'tabby-terminal'
 import { BindIntent, decideBinding } from '../binding'
 import { TomuxPaneSession } from '../paneSession'
@@ -21,6 +21,7 @@ import { TomuxConnection, TmuxVersionError } from '../tmux/connection'
 import { connectionKey } from '../tmux/connectionRegistry'
 import { CommandFlags, TmuxWindow } from '../tmux/controlClient'
 import { ReservationKind } from '../reservations'
+import { describeScreen, ScreenLike } from '../screenReport'
 import { customTitleAction, programTitleFromPane, TabTitleController } from '../tabTitle'
 import { TomuxService } from '../tomux.service'
 
@@ -31,6 +32,9 @@ type BoundWindow = Pick<TmuxWindow, 'id' | 'paneId' | 'index'> & Partial<Pick<Tm
 
 /** Debounce for pushing the tab size to tmux (tmux-integrated uses 100 ms). */
 const RESIZE_DEBOUNCE_MS = 100
+
+/** When to log what a restored tab's terminal shows (its output is written asynchronously). */
+const RESTORE_REPORT_DELAY_MS = 2_000
 
 @Component({
     selector: 'tomux-tab',
@@ -93,6 +97,7 @@ export class TomuxTabComponent extends SSHTabComponent {
     /** Connection key for this tab's reservations; null without a usable SSH profile. */
     private reservationKey: string | null = null
     private reservedWindows = new Set<string>()
+    private tomuxLogger: Logger | null = null
 
     ngOnInit (): void {
         this.tomux = this.injector.get(TomuxService)
@@ -239,10 +244,13 @@ export class TomuxTabComponent extends SSHTabComponent {
         this.setSession(session)
         this.watchConnection(conn)
         await this.settleTitle(window)
+        if (window.adopted) {
+            this.tomuxLog.info(`Restoring window ${window.id}: tab size ${formatSize(this.size)}, ${this.describeTerminalSize()}`)
+        }
         // Size tmux to this tab before capturing, so wrapped lines match.
         if (this.size?.columns && this.size?.rows) {
             this.lastSize = { columns: this.size.columns, rows: this.size.rows }
-            await conn.client.refreshClient(this.size.columns, this.size.rows).catch(() => null)
+            await this.sendClientSize(conn, this.lastSize, 'before capture')
         }
         if (this.disposed) {
             return
@@ -251,6 +259,10 @@ export class TomuxTabComponent extends SSHTabComponent {
         session.releaseInitialDataBuffer()
         if (this.hasFocus) {
             void conn.client.selectWindow(window.id).catch(() => null)
+        }
+        if (window.adopted) {
+            const windowId = window.id
+            setTimeout(() => this.reportRestoredScreen(windowId), RESTORE_REPORT_DELAY_MS)
         }
     }
 
@@ -445,7 +457,9 @@ export class TomuxTabComponent extends SSHTabComponent {
             this.resizeTimer = null
             // One client size per connection: the focused tab's size wins.
             if (this.connection && this.lastSize && this.hasFocus) {
-                void this.connection.client.refreshClient(this.lastSize.columns, this.lastSize.rows).catch(() => null)
+                void this.sendClientSize(this.connection, this.lastSize, 'tab resized')
+            } else if (this.lastSize) {
+                this.tomuxLog.info(`Window ${this.windowId}: tab resized to ${formatSize(this.lastSize)}, not sent to tmux (${this.connection ? 'tab not focused' : 'not connected'})`)
             }
         }, RESIZE_DEBOUNCE_MS)
     }
@@ -457,7 +471,35 @@ export class TomuxTabComponent extends SSHTabComponent {
         }
         void conn.client.selectWindow(this.windowId).catch(() => null)
         if (this.lastSize) {
-            void conn.client.refreshClient(this.lastSize.columns, this.lastSize.rows).catch(() => null)
+            void this.sendClientSize(conn, this.lastSize, 'tab focused')
+        }
+    }
+
+    private async sendClientSize (conn: TomuxConnection, size: { columns: number, rows: number }, reason: string): Promise<void> {
+        this.tomuxLog.info(`Window ${this.windowId}: sizing the tmux client to ${formatSize(size)} (${reason}; ${this.describeTerminalSize()})`)
+        await conn.client.refreshClient(size.columns, size.rows).catch(() => null)
+    }
+
+    // ---- diagnostics -------------------------------------------------------
+
+    private get tomuxLog (): Logger {
+        this.tomuxLogger ??= this.injector.get(LogService).create('tomux-tab')
+        return this.tomuxLogger
+    }
+
+    private get screen (): ScreenLike | null {
+        return (this.frontend as unknown as { xterm?: ScreenLike } | undefined)?.xterm ?? null
+    }
+
+    private describeTerminalSize (): string {
+        const screen = this.screen
+        return screen ? `terminal ${screen.cols}x${screen.rows}` : 'no terminal yet'
+    }
+
+    private reportRestoredScreen (windowId: string): void {
+        const screen = this.screen
+        if (!this.disposed && screen) {
+            this.tomuxLog.info(`Window ${windowId} ${RESTORE_REPORT_DELAY_MS} ms after restore: ${describeScreen(screen)}`)
         }
     }
 
@@ -528,4 +570,8 @@ export class TomuxTabComponent extends SSHTabComponent {
     private writeError (message: string): void {
         this.write(`\r\n\x1b[30;41m tomux \x1b[0m ${message}\r\n`)
     }
+}
+
+function formatSize (size: { columns: number, rows: number } | null | undefined): string {
+    return size ? `${size.columns}x${size.rows}` : 'unknown'
 }

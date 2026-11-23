@@ -6,6 +6,7 @@ import { SshControlTransport, SshSessionLike } from './sshTransport'
 /** A russh-like channel whose requests can be made to fail. */
 class FakeRusshChannel {
     readonly data$ = new Subject<Uint8Array>()
+    readonly extendedData$ = new Subject<[number, Uint8Array]>()
     readonly eof$ = new Subject<void>()
     readonly closed$ = new Subject<void>()
     readonly execs: string[] = []
@@ -15,6 +16,12 @@ class FakeRusshChannel {
     execError: Error | null = null
     /** Output the exec'd command prints before the channel closes; null = never answers. */
     output: string | null = 'tmux 3.5a\n'
+    /** What the command prints on stderr (extended data type 1). */
+    stderr = ''
+    /** Whether the remote sends EOF before closing the channel. */
+    sendsEof = true
+    /** How long the command runs before it prints and exits. */
+    runMs = 0
 
     async requestPTY (terminal: string): Promise<void> {
         this.ptys.push(terminal)
@@ -32,10 +39,17 @@ class FakeRusshChannel {
         if (output !== null) {
             // The remote command runs, prints and exits after the request returns.
             setTimeout(() => {
-                this.data$.next(Buffer.from(output, 'utf8'))
-                this.eof$.next()
+                if (this.stderr) {
+                    this.extendedData$.next([1, Buffer.from(this.stderr, 'utf8')])
+                }
+                if (output) {
+                    this.data$.next(Buffer.from(output, 'utf8'))
+                }
+                if (this.sendsEof) {
+                    this.eof$.next()
+                }
                 this.closed$.next()
-            }, 0)
+            }, this.runMs)
         }
     }
 
@@ -121,6 +135,33 @@ describe('SshControlTransport.readTmuxVersion', () => {
         expect(ch.closeCalls).toBe(1)
         await drain()
         expect(unhandled).toEqual([])
+    })
+
+    it('when tmux -V prints nothing: rejects naming the stderr text, whether EOF came and how long the channel lived', async () => {
+        vi.useFakeTimers()
+        const ch = new FakeRusshChannel()
+        ch.output = ''
+        ch.stderr = 'zsh:1: no such file or directory: /opt/x\n'
+        ch.sendsEof = false
+        ch.runMs = 42
+        const transport = new SshControlTransport(fakeSession(ch))
+        const version = transport.readTmuxVersion().catch((e: Error) => e)
+        await vi.advanceTimersByTimeAsync(42)
+        expect(((await version) as Error).message).toBe(
+            'no output; stderr: "zsh:1: no such file or directory: /opt/x"; EOF: no; channel closed after 42 ms')
+        expect(ch.closeCalls).toBe(1)
+        await drain()
+        expect(unhandled).toEqual([])
+    })
+
+    it('when tmux -V prints nothing and stderr is empty: still says so', async () => {
+        vi.useFakeTimers()
+        const ch = new FakeRusshChannel()
+        ch.output = ''
+        const transport = new SshControlTransport(fakeSession(ch))
+        const version = transport.readTmuxVersion().catch((e: Error) => e)
+        await vi.advanceTimersByTimeAsync(0)
+        expect(((await version) as Error).message).toBe('no output; stderr: ""; EOF: yes; channel closed after 0 ms')
     })
 
     it('rejects when the SSH connection is not logged in', async () => {

@@ -11,6 +11,8 @@ import { shellescape } from './tmux/controlClient'
 /** The parts of a russh Channel tomux uses (verified in spike 1, russh 0.1.38). */
 interface RusshChannel {
     readonly data$: Observable<Uint8Array>
+    /** stderr and other extended data, as [type, data]. */
+    readonly extendedData$: Observable<[number, Uint8Array]>
     readonly eof$: Observable<void>
     readonly closed$: Observable<void>
     requestPTY (terminal: string, opts: { columns: number, rows: number, pixWidth: number, pixHeight: number }): Promise<void>
@@ -66,17 +68,23 @@ export class SshControlTransport implements ControlTransport {
     async readTmuxVersion (): Promise<string> {
         const ch = await this.openChannel()
         const chunks: Uint8Array[] = []
+        const errChunks: Uint8Array[] = []
+        let gotEof = false
         const subscriptions = new Subscription()
         let timer: ReturnType<typeof setTimeout> | undefined
         const done = new Promise<void>((resolve, reject) => {
             timer = setTimeout(() => reject(new Error('tmux -V did not answer in time')), VERSION_TIMEOUT_MS)
             subscriptions.add(ch.data$.subscribe(d => chunks.push(d)))
+            subscriptions.add(ch.extendedData$.subscribe(([, d]) => errChunks.push(d)))
+            subscriptions.add(ch.eof$.subscribe(() => { gotEof = true }))
             subscriptions.add(ch.closed$.subscribe(() => resolve()))
         })
         // `done` is awaited only after requestExec succeeds; never let it
         // reject unobserved when requestExec fails first.
         done.catch(() => undefined)
+        let started = 0
         try {
+            started = Date.now()
             // `2>&1` so that "tmux: command not found" reaches the caller's error message.
             await ch.requestExec('tmux -V 2>&1')
             await done
@@ -85,7 +93,13 @@ export class SshControlTransport implements ControlTransport {
             subscriptions.unsubscribe()
             void closeQuietly(ch)
         }
-        return Buffer.concat(chunks.map(c => Buffer.from(c))).toString('utf-8').trim()
+        const output = decode(chunks)
+        if (!output) {
+            // Output from the remote shell itself (not tmux) only reaches stderr.
+            throw new Error(`no output; stderr: ${JSON.stringify(decode(errChunks))}; ` +
+                `EOF: ${gotEof ? 'yes' : 'no'}; channel closed after ${Date.now() - started} ms`)
+        }
+        return output
     }
 
     private async openChannel (): Promise<RusshChannel> {
@@ -95,6 +109,10 @@ export class SshControlTransport implements ControlTransport {
         }
         return client.activateChannel(await client.openSessionChannel())
     }
+}
+
+function decode (chunks: Uint8Array[]): string {
+    return Buffer.concat(chunks.map(c => Buffer.from(c))).toString('utf-8').trim()
 }
 
 /** Close a channel, ignoring any error (it may already be closed). */

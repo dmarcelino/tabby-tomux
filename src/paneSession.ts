@@ -153,6 +153,8 @@ export class TomuxPaneSession extends BaseSession {
             const snap = await this.connection.client.captureWithCursor(paneId, {
                 onCaptureStart: () => this.gate.captureStarted(),
             })
+            this.logger.info(`Captured pane ${paneId}: pane ${snap.paneWidth}x${snap.paneHeight}, ` +
+                `cursor ${snap.cursorX},${snap.cursorY}, ${snap.text.split('\n').length} lines`)
             return snap.text.replace(/\n/g, '\r\n') + `\x1b[${snap.cursorY + 1};${snap.cursorX + 1}H`
         } catch (error) {
             this.logger.warn('Could not capture the pane:', error)
