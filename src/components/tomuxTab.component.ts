@@ -6,17 +6,19 @@
  * own login flow (connection messages, host-key and password prompts) and
  * later tabs reuse the same SSH connection; only the session differs.
  */
-import { Component, NgZone } from '@angular/core'
+import { Component, NgZone, ViewChild, ViewContainerRef } from '@angular/core'
 import { Subscription } from 'rxjs'
-import { LogService, RecoveryToken } from 'tabby-core'
+import { Logger, LogService, NotificationsService, RecoveryToken } from 'tabby-core'
 import { BaseTerminalTabComponent, ConnectableTerminalTabComponent } from 'tabby-terminal'
-import { BindIntent, decideBinding } from '../binding'
+import { BindIntent, connectIntent, decideBinding } from '../binding'
 import { TomuxPaneSession } from '../paneSession'
 import type { TomuxProfile } from '../profile'
 import { makeRecoveryToken } from '../recoveryToken'
 import { sessionNameError } from '../sessionName'
 import { SshControlTransport } from '../sshTransport'
-import { loadTabbySsh } from '../tabbyAdapter'
+import { installSftpPanelAccessor, loadTabbySsh, openSftpPanelForTab, repairSftpPanelAccessor, resolveSftpPanel, SftpPanelHandle } from '../tabbyAdapter'
+import { SftpPanelControl } from '../sftpPanelControl'
+import { SingleFlight } from '../singleFlight'
 import { TomuxConnection, TmuxVersionError } from '../tmux/connection'
 import { connectionKey } from '../tmux/connectionRegistry'
 import { CommandFlags, TmuxWindow } from '../tmux/controlClient'
@@ -25,7 +27,8 @@ import { ReservationKind } from '../reservations'
 import { shouldShowRename } from '../titleEcho'
 import { TomuxService } from '../tomux.service'
 
-const { SSHTabComponent } = loadTabbySsh()
+const tabbySsh = loadTabbySsh()
+const { SSHTabComponent } = tabbySsh
 
 /** A tmux window this tab is bound to. `adopted`: it existed before, so show its history. */
 type BoundWindow = Pick<TmuxWindow, 'id' | 'paneId' | 'index'> & Partial<Pick<TmuxWindow, 'name' | 'automaticRename'>> & { adopted: boolean }
@@ -35,7 +38,21 @@ const RESIZE_DEBOUNCE_MS = 100
 
 @Component({
     selector: 'tomux-tab',
+    // The <terminal-toolbar> block is copied from tabby-ssh's
+    // src/components/sshTab.component.pug (Tabby 1.0.238), without its
+    // working-directory tip: tomux always knows the pane's directory.
+    // tabby-ssh doesn't export <sftp-panel>, so the panel is created in code
+    // in #sftpHost (design T1, T2 of change add-ssh-toolbar).
     template: `${BaseTerminalTabComponent.template}
+<terminal-toolbar [tab]="this">
+  <i class="fas fa-xs fa-circle text-success me-2" *ngIf="session &amp;&amp; session.open"></i>
+  <i class="fas fa-xs fa-circle text-danger me-2" *ngIf="!session || !session.open"></i>
+  <strong class="me-auto" style="user-select: text; cursor: text;" onclick="event.stopPropagation()">{{profile.options.user}}@{{profile.options.host}}:{{profile.options.port}}<span class="ms-2 fw-normal text-muted" title="tmux session">{{sessionName}}</span></strong>
+  <button class="btn btn-sm btn-link me-2" (click)="reconnect()"><i class="fas fa-redo"></i><span translate>Reconnect</span></button>
+  <button class="btn btn-sm btn-link me-2" (click)="openSFTP()" *ngIf="sftpAvailable &amp;&amp; session &amp;&amp; session.open"><i class="far fa-folder-open"></i><span>SFTP</span></button>
+  <button class="btn btn-sm btn-link" *ngIf="session &amp;&amp; session.open &amp;&amp; hostApp.platform !== Platform.Web" (click)="showPortForwarding()"><i class="fas fa-plug"></i><span translate>Ports</span></button>
+</terminal-toolbar>
+<ng-container #sftpHost></ng-container>
 <div class="tomux-ki bg-dark p-3" *ngIf="activeKIPrompt" (click)="$event.stopPropagation()">
   <div class="mb-2" *ngIf="activeKIPrompt.instruction">{{ activeKIPrompt.instruction }}</div>
   <label class="mb-2">{{ activeKIPrompt.prompts[kiStep]?.prompt }}</label>
@@ -54,7 +71,7 @@ export class TomuxTabComponent extends SSHTabComponent {
     /** Session from a recovery token; wins over the profile's current setting. */
     tomuxSessionName?: string
 
-    enableToolbar = false
+    enableToolbar = true
     disableDynamicTitle = true
     kiStep = 0
 
@@ -77,9 +94,52 @@ export class TomuxTabComponent extends SSHTabComponent {
     private reservationKey: string | null = null
     private reservedWindows = new Set<string>()
 
+    /** Where the SFTP panel is created; set once the view exists. */
+    @ViewChild('sftpHost', { read: ViewContainerRef }) private sftpHost?: ViewContainerRef
+    /** Created lazily: SSHTabComponent's constructor assigns sftpPanelVisible before our fields exist. */
+    private sftpControlValue?: SftpPanelControl
+
+    /** One connect at a time (see SingleFlight): Reconnect can be clicked again mid-connect. */
+    private connectFlight = new SingleFlight()
+
+    /** False when this Tabby's tabby-ssh doesn't export the SFTP panel; the SFTP button is then hidden. */
+    get sftpAvailable (): boolean {
+        return sftpPanelComponent(this.warnLater) !== null
+    }
+
+    /** Backs the sftpPanelVisible accessor installed below the class. */
+    get sftpControl (): SftpPanelControl {
+        this.sftpControlValue ??= new SftpPanelControl(() => this.createSftpPanel())
+        return this.sftpControlValue
+    }
+
+    private get tomuxLogger (): Logger {
+        return this.injector.get(LogService).create('tomux')
+    }
+
+    /** Logs a warning; the logger is created only when there is one. */
+    private readonly warnLater = (message: string): void => this.tomuxLogger.warn(message)
+
+    private createSftpPanel (): SftpPanelHandle | null {
+        if (!this.sftpHost || this.disposed) {
+            return null // no view yet (SSHTabComponent's constructor) or already gone
+        }
+        const component = sftpPanelComponent(this.warnLater)
+        if (!component) {
+            // The toolbar hides SFTP, but Tabby's tab menu and hotkey still ask.
+            this.injector.get(NotificationsService).error('SFTP is not available in tomux tabs with this Tabby version')
+            return null
+        }
+        return openSftpPanelForTab(this, component, this.sftpHost, this.injector, {
+            animate: !!this.config.store.accessibility?.animations,
+            onClosed: () => { this.sftpPanelVisible = false },
+        })
+    }
+
     ngOnInit (): void {
         this.tomux = this.injector.get(TomuxService)
         void this.sessionName // pin the session name now
+        repairSftpPanelAccessor(this, message => this.tomuxLogger.warn(message))
         super.ngOnInit()
         this.destroyed$.subscribe({
             // Read the close intent synchronously: Tabby clears it right after.
@@ -134,13 +194,32 @@ export class TomuxTabComponent extends SSHTabComponent {
         this.activeKIPrompt = null
     }
 
-    async initializeSession (): Promise<void> {
+    /**
+     * Tabby calls this when the tab is first shown and on every reconnect.
+     * A call made while a connect is running joins it (review: a double
+     * click on Reconnect, or Tabby's reconnect-on-session-end firing from
+     * inside reconnect(), must not connect twice).
+     */
+    initializeSession (): Promise<void> {
+        return this.connectFlight.run(() => this.connect())
+    }
+
+    /**
+     * tomux closes its tabs itself, on tmux's window-close and exit events.
+     * Tabby's own rule (close when the profile says so, or after the user typed
+     * `exit`) would close the tab when Reconnect or a lost connection ends the
+     * pane session, leaving the tmux window without a tab.
+     */
+    shouldTabBeDestroyedOnSessionClose (): boolean {
+        return false
+    }
+
+    private async connect (): Promise<void> {
         // Keep the connectable base behaviour, skip SSHTabComponent's own shell.
         await ConnectableTerminalTabComponent.prototype.initializeSession.call(this)
-        if (this.windowId) {
-            // Reconnecting: come back to the same window, or close if it is gone.
-            this.tomuxIntent = { kind: 'adopt', windowId: this.windowId }
-        }
+        // Reconnecting: come back to the same window, or close if it is gone.
+        const reconnecting = this.windowId !== null
+        this.tomuxIntent = connectIntent(this.tomuxIntent, this.windowId)
         this.releaseConnection()
         if (this.disposed) {
             return
@@ -229,7 +308,8 @@ export class TomuxTabComponent extends SSHTabComponent {
         if (this.disposed) {
             return
         }
-        await session.start({ adopt: window.adopted })
+        // A reconnecting tab already shows the old screen: draw it again from scratch.
+        await session.start({ adopt: window.adopted, redraw: reconnecting })
         session.releaseInitialDataBuffer()
         if (this.hasFocus) {
             void conn.client.selectWindow(window.id).catch(() => null)
@@ -351,8 +431,13 @@ export class TomuxTabComponent extends SSHTabComponent {
             // 'lost', or 'released' by someone else (e.g. the registry replaced a
             // connection that stopped answering): show it and let Tabby offer
             // reconnecting, which comes back to the same window (review items 4, 11).
-            this.write('\r\n\x1b[30;43m tomux \x1b[0m Lost the connection to tmux. The tmux window is still running on the host.\r\n')
-            void this.paneSession?.destroy()
+            // This runs outside Angular's zone: run it inside, or the toolbar
+            // keeps showing the tab as connected until something else redraws.
+            this.injector.get(NgZone).run(() => {
+                this.write('\r\n\x1b[30;43m tomux \x1b[0m Lost the connection to tmux. The tmux window is still running on the host.\r\n')
+                this.sftpControlValue?.close()
+                void this.paneSession?.destroy()
+            })
         })
     }
 
@@ -446,6 +531,7 @@ export class TomuxTabComponent extends SSHTabComponent {
         }
         this.disposed = true
         this.closedByUser = userClosed
+        this.sftpControlValue?.close()
         const conn = this.connection
         const windowId = this.windowId
         if (userClosed && conn && windowId && conn.ownerOf(windowId) === this && conn.isLive) {
@@ -476,6 +562,7 @@ export class TomuxTabComponent extends SSHTabComponent {
     }
 
     private releaseConnection (): void {
+        this.sftpControlValue?.close()
         this.tomuxSubs.forEach(s => s.unsubscribe())
         this.tomuxSubs = []
         if (this.resizeTimer) {
@@ -504,4 +591,21 @@ export class TomuxTabComponent extends SSHTabComponent {
     private writeError (message: string): void {
         this.write(`\r\n\x1b[30;41m tomux \x1b[0m ${message}\r\n`)
     }
+}
+
+// SSHTabComponent's constructor assigns sftpPanelVisible before the tab's
+// fields exist; the control is created lazily and opens nothing then, because
+// there is no view yet.
+installSftpPanelAccessor(TomuxTabComponent, tab => tab.sftpControl)
+
+let sftpPanelResolved = false
+let sftpPanelClass: ReturnType<typeof resolveSftpPanel> = null
+
+/** tabby-ssh's SFTPPanelComponent, looked up once (it logs a warning once when missing). */
+function sftpPanelComponent (warn: (message: string) => void): ReturnType<typeof resolveSftpPanel> {
+    if (!sftpPanelResolved) {
+        sftpPanelResolved = true
+        sftpPanelClass = resolveSftpPanel(tabbySsh, warn)
+    }
+    return sftpPanelClass
 }

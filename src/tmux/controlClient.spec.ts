@@ -242,6 +242,48 @@ describe('TmuxControlClient operations', () => {
         t.respond(['7 22'])
         await expect(p).resolves.toEqual({ x: 7, y: 22 })
     })
+
+    it('paneCurrentPath asks tmux for the pane\'s current path', async () => {
+        const t = new FakeTmux().start()
+        const p = t.client.paneCurrentPath('%5')
+        expect(t.commands).toEqual(['display-message -p -t %5 "#{pane_current_path}"'])
+        t.respond(['/var/log'])
+        await expect(p).resolves.toBe('/var/log')
+    })
+
+    it('paneCurrentPath keeps spaces inside the path', async () => {
+        const t = new FakeTmux().start()
+        const p = t.client.paneCurrentPath('%5')
+        t.respond(['/home/dev/My Projects/a  b'])
+        await expect(p).resolves.toBe('/home/dev/My Projects/a  b')
+    })
+
+    it('paneCurrentPath keeps a newline inside a directory name', async () => {
+        const t = new FakeTmux().start()
+        const p = t.client.paneCurrentPath('%5')
+        t.respond(['/home/dev/a', 'b'])
+        await expect(p).resolves.toBe('/home/dev/a\nb')
+    })
+
+    it('paneCurrentPath returns null for an empty or blank reply', async () => {
+        const t = new FakeTmux().start()
+        const empty = t.client.paneCurrentPath('%5')
+        t.respond([''])
+        await expect(empty).resolves.toBeNull()
+        const none = t.client.paneCurrentPath('%5')
+        t.respond([])
+        await expect(none).resolves.toBeNull()
+        const blank = t.client.paneCurrentPath('%5')
+        t.respond(['   '])
+        await expect(blank).resolves.toBeNull()
+    })
+
+    it('paneCurrentPath rejects when tmux reports an error', async () => {
+        const t = new FakeTmux().start()
+        const p = t.client.paneCurrentPath('%99')
+        t.fail("can't find pane: %99")
+        await expect(p).rejects.toThrow()
+    })
 })
 
 describe('TmuxControlClient ping', () => {

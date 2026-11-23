@@ -14,6 +14,14 @@ import { dropTerminalReplies, encodeSendKeys } from './tmux/sendKeys'
 
 /** Upper bound on one batched line of send-keys commands written to tmux. */
 const MAX_BATCH_LINE = 8192
+/**
+ * How long to wait for tmux to report the pane's directory. Tabby awaits it
+ * before opening the SFTP panel, and the reply can queue behind a large
+ * paste or never come on a stalled connection.
+ */
+export const WORKING_DIRECTORY_TIMEOUT_MS = 1500
+/** Clear screen and scrollback, cursor home: the pane is drawn again from scratch. */
+const CLEAR_SCREEN = '\x1b[2J\x1b[3J\x1b[H'
 
 export class TomuxPaneSession extends BaseSession {
     private normalizer = new PaneOutputNormalizer()
@@ -48,11 +56,14 @@ export class TomuxPaneSession extends BaseSession {
      * Starts the session. For a window that existed before (`adopt`), its
      * history and screen are shown first; output already contained in that
      * capture is dropped and newer output follows it (review item 13).
+     * `redraw` (a reconnecting tab) clears the screen and scrollback first, so
+     * the history is not appended below what the tab already shows.
      */
-    async start (options?: { adopt?: boolean }): Promise<void> {
+    async start (options?: { adopt?: boolean, redraw?: boolean }): Promise<void> {
         this.open = true
         if (options?.adopt) {
-            this.gate.open(await this.captureSnapshot(this.paneIdValue))
+            const snapshot = await this.captureSnapshot(this.paneIdValue)
+            this.gate.open(snapshot !== null && options.redraw ? CLEAR_SCREEN + snapshot : snapshot)
         } else {
             this.gate.open()
         }
@@ -63,7 +74,7 @@ export class TomuxPaneSession extends BaseSession {
         this.gate.hold()
         this.paneIdValue = paneId
         void this.captureSnapshot(paneId).then(snap => {
-            this.gate.open('\x1b[2J\x1b[3J\x1b[H' + (snap ?? ''))
+            this.gate.open(CLEAR_SCREEN + (snap ?? ''))
         })
     }
 
@@ -127,12 +138,29 @@ export class TomuxPaneSession extends BaseSession {
         await super.destroy()
     }
 
+    /** tmux knows every pane's directory, so no shell setup (OSC 7) is needed. */
     supportsWorkingDirectory (): boolean {
-        return false
+        return this.connection.isLive
     }
 
+    /** The pane's current directory from tmux, or null when it can't be had in time. */
     async getWorkingDirectory (): Promise<string | null> {
-        return null
+        if (!this.connection.isLive) {
+            return null
+        }
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const timeout = new Promise<null>(resolve => {
+            timer = setTimeout(() => resolve(null), WORKING_DIRECTORY_TIMEOUT_MS)
+        })
+        const query = this.connection.client.paneCurrentPath(this.paneIdValue).catch(error => {
+            this.logger.debug('Could not read the pane\'s working directory:', error)
+            return null
+        })
+        try {
+            return await Promise.race([query, timeout])
+        } finally {
+            clearTimeout(timer)
+        }
     }
 
     private stopListening (): void {
