@@ -32,6 +32,16 @@ export interface BindContext {
     firstBind: boolean
 }
 
+/**
+ * The intent for a (re)connect of a tab. Once a tab has shown a window, every
+ * later connect (Reconnect, or a dropped connection coming back) comes back to
+ * that window or closes the tab; it never creates another (spec
+ * tmux-tab-ssh-tools, "Reconnect re-attaches the tab's window").
+ */
+export function connectIntent (current: BindIntent, boundWindowId: string | null): BindIntent {
+    return boundWindowId ? { kind: 'adopt', windowId: boundWindowId } : current
+}
+
 export function decideBinding (ctx: BindContext): BindDecision {
     const { intent, windows, isOwned } = ctx
     const free = (id: string) => windows.find(w => w.id === id && !isOwned(w.id))

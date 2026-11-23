@@ -123,3 +123,62 @@ Setup: Tabby 1.0.238 on Windows (ARM64), plugin copied into `%APPDATA%\tabby\plu
 | Shell prompt that sets the folder as title (bash `PS1` with `\e]2;\W\a` when `$TERM` is `tmux*`) | Every tab showed its current folder. After Claude Code exited, the next prompt set the folder again. The panes with the old host name changed to their folder after their shell was restarted. |
 | Claude Code's working indicator | Inside tmux Claude Code only ever sets `✳ <topic>`, so the tab cannot show when it is working. With `TMUX` unset it alternates `◐`/`◑` while working and sets `✳` when done, whatever `TERM` is. With `TMUX` set and `TERM=xterm-256color` it again sends only `✳`. Claude Code decides this from `$TMUX`, not tomux. |
 | Claude Code started with `TMUX` unset in tomux tabs (a shell alias `env -u TMUX -u TMUX_PANE claude` inside tmux) | The tab showed `◐`/`◑` while Claude Code worked and `✳` when it was done. |
+
+## SSH toolbar, SFTP and ports (change add-ssh-toolbar), 2026-11-22
+
+Tabby 1.0.238 on macOS, test host Debian 13 with tmux 3.5a reached through a local port forward. Tabby was driven through its DevTools port, with the plugin linked to the change's branch. Results were checked in the DOM and on the host with `tmux list-windows` / `tmux list-clients`.
+
+| Check | Result |
+|---|---|
+| Toolbar, connected | A green dot, `user@host:port` followed by the session name, then Reconnect, SFTP, Ports and Unpin. No working-directory tip. |
+| Toolbar, connection lost | A red dot, and only Reconnect and Unpin. |
+| Unpin / pin | Unpin hides the toolbar and shows Tabby's pin button. Pinning shows it again. |
+| SFTP from the toolbar, after `cd /var/log` | The panel opens in `/var/log`, with no new login. |
+| SFTP from the tab menu ("Open SFTP panel") and the `open-sftp` hotkey | Both open the panel, in `/var/log`. |
+| Closing the panel | A click inside it keeps it open. A click on the terminal, its close button, and a lost connection each close it. It is removed from the page within about 150 ms. |
+| tmux window during SFTP use | `capture-pane` before and after was identical: nothing was typed into the pane. |
+| "Copy current path" in the tab menu | Present, and it copied `/var/log`. |
+| Ports dialog | Opens for the tab's SSH session. A local forward 127.0.0.1:18080 → localhost:22 answered with the host's SSH banner. A second tomux tab of the session listed it, and removing it there closed the port. |
+| Reconnect while connected | Same window and the same tmux connection. History is shown once. Another tab kept receiving output, and no windows were added or removed. |
+| Reconnect after the connection was lost | Logs in again, on a new connection, and shows the same window. No windows were added or removed. |
+| Reconnect after the window was killed while disconnected | The tab closes ("no longer exists"), and no window is created. |
+
+Two bugs were found and fixed in this run. The panel stayed on the page when Tabby's window was in the background (its removal waited on an animation that Chromium hardly runs then). It also stayed after a lost connection (the removal ran outside Angular's zone).
+
+Not tested:
+- Uploading and downloading a file in the SFTP panel. Both use native file dialogs, which DevTools can't operate.
+- Forwarded ports set in the SSH profile. The test profile has none, and Tabby's own SSH session applies them unchanged.
+
+A code review afterwards found 12 more issues, fixed with unit tests (318 tests in total) but **not yet re-checked in a running Tabby**:
+- the SFTP file list didn't scroll;
+- Reconnect could close the tab (after `exit`, or with the profile set to close on session end);
+- a double-click on Reconnect connected twice and left tmux's client attached;
+- Reconnect appended the history again unless the profile clears service messages;
+- the toolbar could show a lost tab as connected;
+- smaller items listed in the change's design (T2–T4, T6).
+
+The remaining checks are in tasks 3.4 and 4.2 of the change.
+
+### Windows, after the code-review fixes (tasks 3.4 and 4.2), 2026-11-23
+
+Setup: Tabby 1.0.238 on Windows (ARM64), plugin built from the change's branch (375 unit tests) and copied into `%APPDATA%\tabby\plugins\node_modules`. Tabby's `log.txt` shows `tomux plugin loaded`. The user ran these checks by hand and reported that all of them passed.
+
+| Check | Expected result (passed) |
+|---|---|
+| Toolbar, connected | Connection dot, `user@host:port` and the session name, Reconnect, SFTP and Ports. |
+| SFTP from the toolbar, the tab menu ("Open SFTP panel") and the `open-sftp` hotkey, after a `cd` | The panel opens in the shell's folder, with no new login. |
+| Closing the panel | Its close button and a click on the terminal close it. |
+| File list in a long folder such as `/usr/bin` | The list scrolls. |
+| Upload and download one file | Both work through Windows' native file dialogs. |
+| tmux window during SFTP use | Nothing is typed into the window. |
+| "Copy current path" in the tab menu | Present, and copies the shell's folder. |
+| Reconnect after `exit` in a nested shell, and with the profile set to close on session end | The tab stays open and shows its window again. |
+
+Still not checked after the code-review fixes (task 4.2):
+- A double-click on Reconnect leaves one tmux client attached, and closing every tab detaches it.
+- With "clear service messages on connect" off, the history appears once after Reconnect.
+- After a dropped connection, the pinned toolbar turns red without other input.
+- Forwarded ports set in the SSH profile are active and listed in the Ports dialog.
+- Ports and the basic Reconnect cases were not repeated on Windows. The macOS run above covers them on the code before the review fixes.
+
+Found while testing, not part of this change (issue #1): a restored tab that is never shown saves a recovery token without its window id. After a second restart it no longer reserves its window, so tomux opens an extra tab for that window, and showing the restored tab later creates a new window.

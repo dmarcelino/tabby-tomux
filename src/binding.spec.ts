@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import { describe, expect, it } from 'vitest'
-import { decideBinding, unclaimedWindows } from './binding'
+import { connectIntent, decideBinding, unclaimedWindows } from './binding'
 import type { TmuxWindow } from './tmux/controlClient'
 
 const win = (id: string, index: number): TmuxWindow => ({ id, index, name: `w${index}`, paneId: `%${index}`, active: false, automaticRename: true })
@@ -50,6 +50,31 @@ describe('decideBinding', () => {
     it('first new bind creates a window when every window is taken', () => {
         expect(decideBinding({ intent: { kind: 'new' }, windows, isOwned: owned('@1', '@2', '@3'), firstBind: true }))
             .toEqual({ action: 'create' })
+    })
+})
+
+describe('connectIntent (Reconnect)', () => {
+    it('keeps the original intent for a tab that never showed a window', () => {
+        expect(connectIntent({ kind: 'new' }, null)).toEqual({ kind: 'new' })
+        expect(connectIntent({ kind: 'reopen', windowId: '@4' }, null)).toEqual({ kind: 'reopen', windowId: '@4' })
+    })
+
+    it('turns any intent into adopting the window the tab showed', () => {
+        expect(connectIntent({ kind: 'new' }, '@2')).toEqual({ kind: 'adopt', windowId: '@2' })
+        expect(connectIntent({ kind: 'reopen', windowId: '@4' }, '@2')).toEqual({ kind: 'adopt', windowId: '@2' })
+    })
+
+    it('a reconnecting tab binds the same window when it still exists', () => {
+        const intent = connectIntent({ kind: 'new' }, '@2')
+        expect(decideBinding({ intent, windows, isOwned: owned(), firstBind: true }))
+            .toEqual({ action: 'bind', window: win('@2', 1) })
+    })
+
+    it('a reconnecting tab closes, never creating a window, when its window is gone', () => {
+        const intent = connectIntent({ kind: 'new' }, '@9')
+        // firstBind is true when this tab's reconnect reopened the connection; it must not matter.
+        expect(decideBinding({ intent, windows, isOwned: owned(), firstBind: true }).action).toBe('close')
+        expect(decideBinding({ intent, windows: [], isOwned: owned(), firstBind: true }).action).toBe('close')
     })
 })
 

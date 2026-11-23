@@ -452,6 +452,22 @@ export class TmuxControlClient {
     }
 
     /**
+     * tomux: the pane's current working directory (`#{pane_current_path}`),
+     * or null when tmux doesn't know it.  Only the final line ending is
+     * stripped, so a path with leading or trailing spaces stays intact, and a
+     * directory name containing a newline (which tmux prints as several
+     * reply lines) comes back whole.  Rejects when the command fails (for
+     * example, the pane is gone).
+     */
+    async paneCurrentPath(paneId: string): Promise<string | null> {
+        const res = await this.sendCommand(
+            `display-message -p -t ${paneId} "#{pane_current_path}"`,
+        );
+        const path = res.join('\n').replace(/[\r\n]+$/u, '');
+        return path.trim() ? path : null;
+    }
+
+    /**
      * tomux: the title a program set for `paneId` (OSC 0/2, `#{pane_title}`)
      * and `#{host}`, which tmux uses as the title of a pane no program has
      * titled.  The title is the last field, so a '|' in it cannot shift the

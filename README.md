@@ -27,6 +27,11 @@ Status: early development, tested against Tabby 1.0.238 and tmux 3.5a.
   - If your shell sets the terminal title at every prompt (many bash and zsh setups do), unnamed tabs show that title, for example `user@host: ~/src`, instead of `tmux:<index>`. To keep `tmux:<index>`, turn on **Disable dynamic tab title** in the tomux profile.
   - After a reconnect, a restart or a pane switch, the tab shows the title tmux remembers for the active pane.
 - **Tabby's tab hotkeys** (next/previous tab, go to tab N, move tab) work as usual. Moving a tab doesn't reorder windows in tmux.
+- **Toolbar:** like an SSH tab, a tomux tab has Tabby's toolbar (hover the top of the tab, or pin it). It shows `user@host:port` and the tmux session name, and offers:
+  - **SFTP:** opens Tabby's SFTP browser on the same SSH connection, starting in the folder the tab's shell is in (tmux reports it, so no shell setup is needed). The tab's context menu ("Open SFTP panel") and Tabby's SFTP hotkey open it too.
+  - **Ports:** Tabby's port forwarding dialog. Forwards belong to the host's SSH connection, so every tab using that connection (all tomux tabs of the host, and SSH tabs sharing the connection) sees the same forwards, and they stay up while any of those tabs is connected. Forwards set in the SSH profile are active as well.
+  - **Reconnect:** connects the tab again and shows the same tmux window. While connected, this just redraws the window from tmux; other tabs aren't affected. If the window was closed meanwhile, the tab closes.
+- **Copy current path** in the tab's context menu copies the folder the tab's shell is in.
 
 ### Closing and restoring
 
