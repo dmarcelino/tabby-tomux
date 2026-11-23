@@ -159,4 +159,26 @@ A code review afterwards found 12 more issues, fixed with unit tests (318 tests 
 
 The remaining checks are in tasks 3.4 and 4.2 of the change.
 
+### Windows, after the code-review fixes (tasks 3.4 and 4.2), 2026-11-23
+
+Setup: Tabby 1.0.238 on Windows (ARM64), plugin built from the change's branch (375 unit tests) and copied into `%APPDATA%\tabby\plugins\node_modules`. Tabby's `log.txt` shows `tomux plugin loaded`. The user ran these checks by hand and reported that all of them passed.
+
+| Check | Expected result (passed) |
+|---|---|
+| Toolbar, connected | Connection dot, `user@host:port` and the session name, Reconnect, SFTP and Ports. |
+| SFTP from the toolbar, the tab menu ("Open SFTP panel") and the `open-sftp` hotkey, after a `cd` | The panel opens in the shell's folder, with no new login. |
+| Closing the panel | Its close button and a click on the terminal close it. |
+| File list in a long folder such as `/usr/bin` | The list scrolls. |
+| Upload and download one file | Both work through Windows' native file dialogs. |
+| tmux window during SFTP use | Nothing is typed into the window. |
+| "Copy current path" in the tab menu | Present, and copies the shell's folder. |
+| Reconnect after `exit` in a nested shell, and with the profile set to close on session end | The tab stays open and shows its window again. |
+
+Still not checked after the code-review fixes (task 4.2):
+- A double-click on Reconnect leaves one tmux client attached, and closing every tab detaches it.
+- With "clear service messages on connect" off, the history appears once after Reconnect.
+- After a dropped connection, the pinned toolbar turns red without other input.
+- Forwarded ports set in the SSH profile are active and listed in the Ports dialog.
+- Ports and the basic Reconnect cases were not repeated on Windows. The macOS run above covers them on the code before the review fixes.
+
 Found while testing, not part of this change (issue #1): a restored tab that is never shown saves a recovery token without its window id. After a second restart it no longer reserves its window, so tomux opens an extra tab for that window, and showing the restored tab later creates a new window.
