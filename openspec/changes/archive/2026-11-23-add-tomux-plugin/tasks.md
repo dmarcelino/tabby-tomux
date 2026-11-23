@@ -16,7 +16,7 @@
 
 ## 3. Spike 2: a tab that is an SSH tab with its own session
 
-- [ ] 3.1 Create a minimal `TomuxTab` extending `SSHTabComponent` that overrides `initializeSession()` to call `setupOneSession()` and then attaches a stub `BaseSession` echoing typed input back; verify a password-protected profile shows Tabby's prompt inside this tab and the echo works after login
+- [x] 3.1 Create a minimal `TomuxTab` extending `SSHTabComponent` that overrides `initializeSession()` to call `setupOneSession()` and then attaches a stub `BaseSession` echoing typed input back; verify a password-protected profile shows Tabby's prompt inside this tab and the echo works after login
 - [x] 3.2 Verify a second `TomuxTab` for the same profile reuses the SSH connection without prompting again
 - [x] 3.3 Check which inherited SSH UI is visible (SFTP button, port forwarding, reconnect message) and verify each one can be hidden or does no harm; note which `@hidden` members were needed
 - [x] 3.4 Verify the tab's own `getRecoveryToken()` with `type: 'app:tomux-tab'` is not claimed by Tabby's SSH recovery provider
@@ -62,12 +62,12 @@
 
 - [x] 9.1 Implement `getRecoveryToken()` (no `savedState`, `windowId` only with `includeState`, user-close tag for the closed-tab stack) and `TomuxRecoveryProvider` mapping tokens to adopt / reopen / new; verify unit tests for token shapes per Tabby flow
 - [x] 9.2 Verify on the test host: three tabs, quit Tabby, reopen, and the same three windows come back in order with scrollback shown once; a window killed while Tabby was closed does not come back and no window is created; a window created elsewhere opens as an extra tab
-- [ ] 9.3 Verify on the test host that restoring eight tabs of a password-protected profile asks for the password once and leaves the session with the same number of windows
+- [x] 9.3 Verify on the test host that restoring eight tabs of a password-protected profile asks for the password once and leaves the session with the same number of windows
 - [x] 9.4 Verify restart tab keeps the window, duplicate creates a new window, and reopen closed tab creates a new window in the same session; document restore behaviour and the main-window-only limit in the README
 
 ## 10. Integration and reliability checks
 
-- [ ] 10.1 Run a reliability pass on the test host and record results in `doc/TESTING.md`: laptop sleep/resume, network drop and reconnect, `yes | head -c 50M` heavy output, 10+ windows restored, two Tabby windows on the same session
+- [x] 10.1 Run a reliability pass on the test host and record results in `doc/TESTING.md`: laptop sleep/resume, network drop and reconnect, `yes | head -c 50M` heavy output, 10+ windows restored, two Tabby windows on the same session
 - [x] 10.2 Build against the latest Tabby nightly and verify the plugin loads and spike checks 3.1 and 4.1-4.2 still pass; record the tested Tabby version in the README
 - [x] 10.3 Run `openspec validate add-tomux-plugin --strict` and verify it passes
 
