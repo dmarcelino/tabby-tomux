@@ -25,6 +25,10 @@ export interface FakeTmuxOptions {
     detachExits?: boolean
     /** Extra notifications sent during start-up, before %session-changed. */
     startupNotifications?: string[]
+    /** #{host}; also the #{pane_title} of a pane with no entry in `paneTitles`. */
+    host?: string
+    /** #{pane_title} per pane id, as set by a program (OSC 0/2). */
+    paneTitles?: Record<string, string>
 }
 
 export class FakeChannel implements ControlChannel {
@@ -175,6 +179,11 @@ export class FakeTmux implements ControlTransport {
         }
         if (command === 'display-message -p "#{session_created} #{client_created}"') {
             return [`${this.opts.sessionCreated ?? 1700000000} ${this.opts.clientCreated ?? 1700000100}`]
+        }
+        const paneTitle = /^display-message -p -t (%\d+) "#\{host\}\|#\{pane_title\}"$/u.exec(command)
+        if (paneTitle) {
+            const host = this.opts.host ?? 'testhost'
+            return [`${host}|${this.opts.paneTitles?.[paneTitle[1]] ?? host}`]
         }
         if (command.startsWith('list-windows')) {
             return this.opts.windows ?? ['@0|0|%0|1|1|bash']

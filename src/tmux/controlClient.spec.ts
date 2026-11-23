@@ -244,6 +244,38 @@ describe('TmuxControlClient operations', () => {
         t.respond(['7 22'])
         await expect(p).resolves.toEqual({ x: 7, y: 22 })
     })
+
+    it('getPaneTitle asks for host and pane title, title last', async () => {
+        const t = new FakeTmux().start()
+        const p = t.client.getPaneTitle('%5')
+        expect(t.commands).toEqual(['display-message -p -t %5 "#{host}|#{pane_title}"'])
+        t.respond(['testhost|fix login bug'])
+        await expect(p).resolves.toEqual({ host: 'testhost', title: 'fix login bug' })
+    })
+
+    it('getPaneTitle keeps a | inside the title', async () => {
+        const t = new FakeTmux().start()
+        const p = t.client.getPaneTitle('%5')
+        t.respond(['testhost|build | test'])
+        await expect(p).resolves.toEqual({ host: 'testhost', title: 'build | test' })
+    })
+
+    it('getPaneTitle reads an untitled pane (title = host) and an empty title', async () => {
+        const t = new FakeTmux().start()
+        const untitled = t.client.getPaneTitle('%1')
+        t.respond(['testhost|testhost'])
+        await expect(untitled).resolves.toEqual({ host: 'testhost', title: 'testhost' })
+        const empty = t.client.getPaneTitle('%2')
+        t.respond(['testhost|'])
+        await expect(empty).resolves.toEqual({ host: 'testhost', title: '' })
+    })
+
+    it('getPaneTitle rejects when the pane is gone', async () => {
+        const t = new FakeTmux().start()
+        const p = t.client.getPaneTitle('%9')
+        t.fail("can't find pane: %9")
+        await expect(p).rejects.toThrow()
+    })
 })
 
 describe('TmuxControlClient ping', () => {
