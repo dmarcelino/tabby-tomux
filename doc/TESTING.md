@@ -110,3 +110,16 @@ Same setup, with the review fixes loaded.
 | Lone tab, rename confirmed on the shown program title | Still pins it: the window was renamed `pin me`. |
 
 The repeated restarts of another test run in the meantime had left 28 tabs without a window (issue #1). They were closed, and every remaining tab was shown once so its window is saved on the next quit. One window of the test session was removed outside tomux during that run.
+
+### Windows, macOS host with Claude Code, 2026-11-23
+
+Setup: Tabby 1.0.238 on Windows (ARM64), plugin copied into `%APPDATA%\tabby\plugins\node_modules`. The test host runs macOS with tmux 3.8, bash 5 and Claude Code 2.1.330. Tmux titles were read with `display -p '#{host}|#{pane_title}'`, and the bytes Claude Code writes were recorded with `pipe-pane` in a separate tmux server.
+
+| Check | Result |
+|---|---|
+| Restore after a restart | Three tabs restored to their windows. Panes created before the host was renamed showed the old host name: their `#{pane_title}` is the old name and `#{host}` the new one (the known limitation in design.md). |
+| New pane | `#{pane_title}` equals `#{host}`, so the tab shows `tmux:<n>`. |
+| Claude Code start and exit | Claude Code sets `OSC 0 "✳ Claude Code"` when it starts and an empty `OSC 0` when it exits; it uses no title stack. A title set before it (`foo`) is not restored: tmux's pane title is empty afterwards and the tab shows `tmux:<n>`, as the spec says. |
+| Shell prompt that sets the folder as title (bash `PS1` with `\e]2;\W\a` when `$TERM` is `tmux*`) | Every tab showed its current folder. After Claude Code exited, the next prompt set the folder again. The panes with the old host name changed to their folder after their shell was restarted. |
+| Claude Code's working indicator | Inside tmux Claude Code only ever sets `✳ <topic>`, so the tab cannot show when it is working. With `TMUX` unset it alternates `◐`/`◑` while working and sets `✳` when done, whatever `TERM` is. With `TMUX` set and `TERM=xterm-256color` it again sends only `✳`. Claude Code decides this from `$TMUX`, not tomux. |
+| Claude Code started with `TMUX` unset in tomux tabs (a shell alias `env -u TMUX -u TMUX_PANE claude` inside tmux) | The tab showed `◐`/`◑` while Claude Code worked and `✳` when it was done. |
