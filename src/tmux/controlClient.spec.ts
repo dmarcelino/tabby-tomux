@@ -184,15 +184,17 @@ describe('TmuxControlClient operations', () => {
         await expect(p).resolves.toBe('x')
     })
 
-    it('captureWithCursor sends capture-pane and the cursor query as one line', async () => {
+    it('captureWithCursor sends capture-pane and the cursor and pane size query as one line', async () => {
         const t = new FakeTmux().start()
         const p = t.client.captureWithCursor('%5')
         expect(t.writes).toEqual([
-            'capture-pane -p -e -J -S - -t %5 ; display-message -p -t %5 "#{cursor_x} #{cursor_y}"\r',
+            'capture-pane -p -e -J -S - -t %5 ; display-message -p -t %5 "#{cursor_x} #{cursor_y} #{pane_width} #{pane_height}"\r',
         ])
         t.respond(['\x1b[1mline one\x1b[0m', 'line two', ''])
-        t.respond(['7 22'])
-        await expect(p).resolves.toEqual({ text: '\x1b[1mline one\x1b[0m\nline two\n', cursorX: 7, cursorY: 22 })
+        t.respond(['7 22 182 48'])
+        await expect(p).resolves.toEqual({
+            text: '\x1b[1mline one\x1b[0m\nline two\n', cursorX: 7, cursorY: 22, paneWidth: 182, paneHeight: 48,
+        })
     })
 
     it('captureWithCursor calls onCaptureStart at the capture\'s %begin, before later output', async () => {
@@ -202,18 +204,18 @@ describe('TmuxControlClient operations', () => {
         const p = t.client.captureWithCursor('%5', { onCaptureStart: () => { events.push('capture start') } })
         t.gateway.ingest('%output %5 old\r\n')
         t.respond(['screen'])
-        t.respond(['0 3'])
+        t.respond(['0 3 80 24'])
         t.gateway.ingest('%output %5 new\r\n')
         expect(events).toEqual(['output old', 'capture start', 'output new'])
-        await expect(p).resolves.toEqual({ text: 'screen', cursorX: 0, cursorY: 3 })
+        await expect(p).resolves.toEqual({ text: 'screen', cursorX: 0, cursorY: 3, paneWidth: 80, paneHeight: 24 })
     })
 
-    it('captureWithCursor reads an unparseable cursor as 0,0', async () => {
+    it('captureWithCursor reads an unparseable cursor and pane size as 0', async () => {
         const t = new FakeTmux().start()
         const p = t.client.captureWithCursor('%5')
         t.respond([])
         t.respond(['?'])
-        await expect(p).resolves.toEqual({ text: '', cursorX: 0, cursorY: 0 })
+        await expect(p).resolves.toEqual({ text: '', cursorX: 0, cursorY: 0, paneWidth: 0, paneHeight: 0 })
     })
 
     it('captureWithCursor rejects when the capture fails (the cursor query is skipped)', async () => {
