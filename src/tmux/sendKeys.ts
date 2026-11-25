@@ -6,7 +6,8 @@
 // Copyright (C) the tmux-integrated authors
 //
 // Changes: pure functions returning command strings; 1,024-byte cap; Ctrl-\ and non-ASCII-in-ESC fixes;
-// reply filter keeps CSI … R (modified F3) (see 'tomux:' notes).
+// reply filter keeps CSI … R (modified F3); application-cursor-mode arrows, Home and End sent by name
+// (see 'tomux:' notes).
 
 /**
  * Terminal input → tmux `send-keys` commands.
@@ -56,6 +57,16 @@ const KEY_MAP: Record<string, string> = {
     '\x1b[D':   'Left',
     '\x1b[H':   'Home',
     '\x1b[F':   'End',
+    // tomux: the same six keys as xterm.js sends them once the program has
+    // turned on application cursor mode (DECCKM), as vim does. Sent as raw
+    // bytes, ESC O H / ESC O F are not what a program under tmux expects for
+    // Home / End: vim read them as Escape, `O`, `H`.
+    '\x1bOA':   'Up',
+    '\x1bOB':   'Down',
+    '\x1bOC':   'Right',
+    '\x1bOD':   'Left',
+    '\x1bOH':   'Home',
+    '\x1bOF':   'End',
     '\x1b[5~':  'PageUp',
     '\x1b[6~':  'PageDown',
     '\x1b[3~':  'DC',
@@ -106,7 +117,7 @@ const SORTED_KEY_SEQUENCES: string[] =
  *
  * Recognises:
  *   - CSI:  ESC [ <params> <final 0x40..0x7E>          (e.g. \x1b[24;80R)
- *   - SS3:  ESC O <one-byte-final>                      (e.g. \x1bOA)
+ *   - SS3:  ESC O <one-byte-final>                      (e.g. \x1bOM)
  *   - OSC:  ESC ] <text> ST | BEL                       (e.g. \x1b]0;title\x07)
  *   - DCS / SOS / PM / APC:  ESC <P|X|^|_> <text> ST
  *
