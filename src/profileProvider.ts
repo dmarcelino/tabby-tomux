@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import { Injectable, Injector } from '@angular/core'
-import { NewTabParameters, PartialProfile, ProfileProvider, ProfilesService } from 'tabby-core'
+import { AppService, ConfigService, NewTabParameters, PartialProfile, ProfileProvider, ProfilesService, SplitTabComponent } from 'tabby-core'
 import { TomuxProfileSettingsComponent } from './components/profileSettings.component'
 import { TomuxTabComponent } from './components/tomuxTab.component'
+import { activeTomuxTab, followedTabInputs, tabToFollow } from './followActiveTab'
 import { TOMUX_PROFILE_TYPE, TomuxProfile } from './profile'
 import { TomuxService } from './tomux.service'
 import { DEFAULT_SESSION_NAME } from './sessionName'
@@ -20,7 +21,7 @@ export class TomuxProfileProvider extends ProfileProvider<TomuxProfile> {
         },
     }
 
-    // ProfilesService is looked up lazily: it constructs the profile providers itself (cycle).
+    // ProfilesService and AppService are looked up lazily: both end up constructing tomux's providers (cycle).
     constructor (private injector: Injector) {
         super()
     }
@@ -39,10 +40,25 @@ export class TomuxProfileProvider extends ProfileProvider<TomuxProfile> {
     }
 
     async getNewTabParameters (profile: TomuxProfile): Promise<NewTabParameters<TomuxTabComponent>> {
+        // `+` and the new-tab hotkey open the default profile: they add a
+        // window to the session of the tomux tab the user is looking at
+        // instead (spec tomux-profile, change plus-follows-active-tab).
+        const followed = tabToFollow(profile.id, this.injector.get(ConfigService).store.terminal?.profile, this.activeTomuxTab())
         return {
             type: TomuxTabComponent,
-            inputs: await this.injector.get(TomuxService).tabInputs(profile, { kind: 'new' }) as any,
+            inputs: (followed
+                ? followedTabInputs(followed)
+                : await this.injector.get(TomuxService).tabInputs(profile, { kind: 'new' })) as any,
         }
+    }
+
+    /** The active tomux tab, or a split's focused tomux pane. AppService is looked up lazily (cycle). */
+    private activeTomuxTab (): TomuxTabComponent | null {
+        return activeTomuxTab(
+            this.injector.get(AppService).activeTab,
+            (tab): tab is TomuxTabComponent => tab instanceof TomuxTabComponent,
+            tab => tab instanceof SplitTabComponent ? tab.getFocusedTab() : null,
+        )
     }
 
     getDescription (profile: PartialProfile<TomuxProfile>): string {

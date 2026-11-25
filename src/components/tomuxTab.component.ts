@@ -11,6 +11,7 @@ import { merge, Subscription } from 'rxjs'
 import { Logger, LogService, NotificationsService, RecoveryToken } from 'tabby-core'
 import { BaseTerminalTabComponent, ConnectableTerminalTabComponent } from 'tabby-terminal'
 import { BindIntent, connectIntent, decideBinding } from '../binding'
+import { followedTabLook } from '../followActiveTab'
 import { TomuxPaneSession } from '../paneSession'
 import type { TomuxProfile } from '../profile'
 import { makeRecoveryToken } from '../recoveryToken'
@@ -71,8 +72,10 @@ export class TomuxTabComponent extends SSHTabComponent {
     tomuxProfile!: TomuxProfile
     tomuxIntent: BindIntent = { kind: 'new' }
     tomuxError?: string
-    /** Session from a recovery token; wins over the profile's current setting. */
+    /** Session from a recovery token or a followed tab; wins over the profile's current setting. */
     tomuxSessionName?: string
+    /** Set when `+` followed the active tab (see followActiveTab.ts). */
+    tomuxFollowed?: boolean
 
     enableToolbar = true
     /**
@@ -157,6 +160,14 @@ export class TomuxTabComponent extends SSHTabComponent {
     ngOnInit (): void {
         this.tomux = this.injector.get(TomuxService)
         void this.sessionName // pin the session name now
+        if (this.tomuxFollowed) {
+            // Tabby gave this tab the default profile's title, colour and icon
+            // after the provider returned; use those of the profile it opened on.
+            const look = followedTabLook(this.tomuxProfile)
+            this.setTitle(look.title)
+            this.color = look.color
+            this.icon = look.icon
+        }
         repairSftpPanelAccessor(this, message => this.tomuxLog.warn(message))
         super.ngOnInit()
         this.destroyed$.subscribe({
