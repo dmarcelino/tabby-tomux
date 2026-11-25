@@ -4,7 +4,11 @@ import { dropTerminalReplies, encodeSendKeys, MAX_SEND_KEYS_COMMAND_BYTES } from
 
 const PANE = '%3'
 
-/** Reverse of sendKeys.ts KEY_MAP (`\n` also maps to Enter; decoded as `\r`). */
+/**
+ * Reverse of sendKeys.ts KEY_MAP (`\n` also maps to Enter; decoded as `\r`).
+ * Arrows, Home and End decode to their normal-mode form; KEY_MAP also accepts
+ * the application-cursor-mode form (`ESC O …`).
+ */
 const KEY_NAMES: Record<string, string> = {
     Enter: '\r', BSpace: '\x7f', Escape: '\x1b', Tab: '\t',
     Up: '\x1b[A', Down: '\x1b[B', Right: '\x1b[C', Left: '\x1b[D',
@@ -137,9 +141,36 @@ describe('encodeSendKeys', () => {
         ])
     })
 
-    it('hex-encodes unknown sequences atomically (SS3 arrows, modified arrows)', () => {
-        expect(encodeSendKeys('\x1bOA\x1b[1;5C', PANE)).toEqual([
-            'send-keys -t %3 0x1b 0x4f 0x41',
+    it('sends Home and End by name in application cursor mode', () => {
+        expect(encodeSendKeys('\x1bOH\x1bOF', PANE)).toEqual([
+            'send-keys -t %3 Home',
+            'send-keys -t %3 End',
+        ])
+    })
+
+    it('sends the arrow keys by name in application cursor mode', () => {
+        expect(encodeSendKeys('\x1bOA\x1bOB\x1bOC\x1bOD', PANE)).toEqual([
+            'send-keys -t %3 Up',
+            'send-keys -t %3 Down',
+            'send-keys -t %3 Right',
+            'send-keys -t %3 Left',
+        ])
+    })
+
+    it('keeps application-mode Home and End apart from the text around them', () => {
+        // What xterm.js sends for: abc, Home, X, End, Y in vim's insert mode.
+        expect(encodeSendKeys('abc\x1bOHX\x1bOFY', PANE)).toEqual([
+            'send-keys -lt %3 abc',
+            'send-keys -t %3 Home',
+            'send-keys -lt %3 X',
+            'send-keys -t %3 End',
+            'send-keys -lt %3 Y',
+        ])
+    })
+
+    it('hex-encodes unknown sequences atomically (other SS3 sequences, modified arrows)', () => {
+        expect(encodeSendKeys('\x1bOM\x1b[1;5C', PANE)).toEqual([
+            'send-keys -t %3 0x1b 0x4f 0x4d',
             'send-keys -t %3 0x1b 0x5b 0x31 0x3b 0x35 0x43',
         ])
     })
