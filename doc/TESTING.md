@@ -182,3 +182,7 @@ Still not checked after the code-review fixes (task 4.2):
 - Ports and the basic Reconnect cases were not repeated on Windows. The macOS run above covers them on the code before the review fixes.
 
 Found while testing, not part of this change (issue #1): a restored tab that is never shown saves a recovery token without its window id. After a second restart it no longer reserves its window, so tomux opens an extra tab for that window, and showing the restored tab later creates a new window.
+
+## Home and End in application cursor mode (change fix-app-cursor-home-end, task 3.2), 2026-11-25
+
+The user tested the fix by hand in a running Tabby and reported that the Home and End keys work. The report did not name the Tabby version, the host or the programs used, and did not mention the arrow keys, so the arrow scenario in the change's spec is covered by unit tests only.

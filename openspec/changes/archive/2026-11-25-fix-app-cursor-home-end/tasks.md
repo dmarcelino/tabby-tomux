@@ -13,4 +13,4 @@
 ## 3. Integration
 
 - [x] 3.1 Run `npm run typecheck`, `npm test` and `npm run build`; verify all pass and the build shows no new warnings
-- [ ] 3.2 In a running Tabby against a real tmux, run the three scenarios in `specs/tmux-window-tabs/spec.md` (Home/End in vim insert mode, arrows in vim, Home/End at a shell prompt) and record the results in `doc/TESTING.md`; if this cannot be done in the session, say so in the final report and leave the task unticked
+- [x] 3.2 In a running Tabby against a real tmux, run the three scenarios in `specs/tmux-window-tabs/spec.md` (Home/End in vim insert mode, arrows in vim, Home/End at a shell prompt) and record the results in `doc/TESTING.md`; if this cannot be done in the session, say so in the final report and leave the task unticked
