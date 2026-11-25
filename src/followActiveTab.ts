@@ -5,6 +5,7 @@
  * every rule is unit-tested; TomuxProfileProvider supplies the Tabby facts.
  */
 import type { TomuxProfile } from './profile'
+import { sessionNameError } from './sessionName'
 import type { TomuxTabInputs } from './tomux.service'
 
 /** What a tomux tab offers to be followed (TomuxTabComponent has all of these). */
@@ -39,17 +40,24 @@ export function activeTomuxTab<T> (
  * The tab a new tab for `requestedProfileId` should follow, or null to use the
  * requested profile as is. Only the default profile follows (D1); `+` gives no
  * other sign that it was pressed. The tab's connection state does not matter
- * (D4): only a tab that cannot connect anywhere is not followed.
+ * (D4): only a tab that cannot connect anywhere is not followed. That covers
+ * an error set when the tab was created, a session name tmux rejects, and a
+ * tomux or SSH profile deleted since (`profileExists` answers for the ids).
  */
 export function tabToFollow<T extends FollowableTab> (
     requestedProfileId: string | undefined,
     defaultProfileId: string | undefined,
     activeTab: T | null,
+    profileExists: (id: string) => boolean,
 ): T | null {
     if (!requestedProfileId || requestedProfileId !== defaultProfileId) {
         return null
     }
-    if (!activeTab || activeTab.tomuxError) {
+    if (!activeTab || activeTab.tomuxError || sessionNameError(activeTab.sessionName)) {
+        return null
+    }
+    const ids = [activeTab.tomuxProfile?.id, activeTab.profile?.id]
+    if (!ids.every(id => typeof id === 'string' && profileExists(id))) {
         return null
     }
     return activeTab
@@ -60,14 +68,32 @@ export function tabToFollow<T extends FollowableTab> (
  * profile and session, not values looked up again from the profile id, so it
  * gets the same connection key (D3).
  */
-export function followedTabInputs (tab: FollowableTab): TomuxTabInputs {
+export function followedTabInputs (tab: FollowableTab, container: TabContainer | null, unfollowed: TomuxTabInputs): TomuxTabInputs {
     return {
         profile: tab.profile,
         tomuxProfile: tab.tomuxProfile,
         tomuxIntent: { kind: 'new' },
         tomuxSessionName: tab.sessionName,
         tomuxFollowed: true,
+        tomuxFollowedFrom: { tab, container },
+        tomuxUnfollowed: unfollowed,
     }
+}
+
+/** The split that held a followed tab (Tabby's SplitTabComponent). */
+export interface TabContainer {
+    getAllTabs (): unknown[]
+}
+
+/**
+ * True when the followed tab left the split it was in by the time the new tab
+ * starts. Tabby's "Switch profile" builds the replacement through the same
+ * path as `+` and then puts it in the old tab's place, so this is how the new
+ * tab tells a switch from `+`: it then opens the profile that was asked for
+ * (design D6). A tab that had no split is never treated as replaced.
+ */
+export function followedTabWasReplaced (tab: unknown, container: TabContainer | null): boolean {
+    return container !== null && !container.getAllTabs().includes(tab)
 }
 
 /**

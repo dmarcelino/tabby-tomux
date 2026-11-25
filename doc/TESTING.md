@@ -208,3 +208,15 @@ Found and fixed during this run: a followed tab got colour `''` instead of none,
 Seen but outside this change: detaching a session's control client from the host (`tmux detach-client`) closes all of that session's tabs, because tmux sends `%exit`. The windows keep running. The test used `kill -9` on the client instead, to get a lost connection.
 
 Not run: clicking the profile selector UI itself, and checks on Windows or Linux.
+
+### Code-review fixes (task 5.4), 2026-11-25
+
+Same setup (Tabby 1.0.238 on macOS, Debian 13 test host with tmux 3.5a, driven through DevTools). Two extra tomux profiles were added for this run and removed afterwards.
+
+| Check | Result |
+|---|---|
+| A tab of a tomux profile that was deleted after the tab opened, `+` | Falls back to the default session. |
+| A tab whose session name is `a.b` (shows "tmux does not allow "." in session names."), `+` | Falls back to the default session. |
+| Tabby's **Switch profile** to the default profile on the only tab of `tomux-fresh` (Tabby's own `switchTabProfile`, with the profile picker stubbed to return the default) | Before the fix: the replacement followed the replaced tab into `tomux-fresh` on a new window. After the fix (design D6): the replacement opens on a new window in the default session. The replaced tab's window keeps running: Tabby destroys the old tab without a user close, so tomux does not kill its window. |
+| Switch profile to the default on the focused pane of a two-pane `tomux-fresh` split | That pane becomes a tab on the default session. The other pane is unchanged. |
+| After the fix: `+`, `⌘-T`, and `+` from a pane of a two-pane split, each on a `tomux-fresh` tab | Each still follows: one new window in `tomux-fresh`. |

@@ -23,6 +23,14 @@
 
 - [x] 4.1 Run `openspec validate plus-follows-active-tab --strict`, `npm run typecheck`, `npm test` and `npm run build`, and verify all pass and the build shows no new warnings
 
+## 5. Review fixes
+
+- [x] 5.1 Make `tabToFollow` also refuse a tab whose session name `sessionNameError` rejects, and a tab whose tomux profile or SSH profile no longer exists (the provider passes the ids `ProfilesService.getProfiles()` returns, looked up only when there is a tomux tab to follow) (design D4). Verify with unit tests for an invalid session name, a deleted tomux profile and a deleted SSH profile, and with `npm run typecheck`
+- [x] 5.2 Add to the spec the scenarios "Active tab has an invalid session name", "Active tab's profile was deleted" and "Switching a tomux tab to the default profile". Verify with `openspec validate plus-follows-active-tab --strict`
+- [x] 5.3 Make a followed tab open the requested profile when the tab it followed was replaced by Tabby's "Switch profile" (design D6): pass the followed tab, its split and the requested profile's inputs, and check in `ngOnInit` before the session name is pinned. Verify with unit tests of `followedTabWasReplaced` and the inputs, and with `npm run typecheck`
+- [x] 5.4 In a running Tabby against the test host, check a deleted tomux profile, an invalid session name, Switch profile to the default (single tab and a split pane), and that `+`, `⌘-T` and `+` from a split pane still follow. Record the results in `doc/TESTING.md`
+- [x] 5.5 Run `npm run typecheck`, `npm test` and `npm run build`, and verify all pass with no new build warnings
+
 ## Workflow follow-up
 
 - Archive the change after review, so `tomux-profile` takes the modified requirement.

@@ -3,7 +3,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Plus button and new-tab hotkey
-When a tomux profile is set as Tabby's default profile, Tabby's `+` button and new-tab hotkey SHALL open a tomux tab bound to a new tmux window. If the active tab, or the focused pane of a split, is a tomux tab that does not show a profile error, the window SHALL be created in that tab's host and session, whatever its connection state. Otherwise it SHALL be created in the default profile's host and session.
+When a tomux profile is set as Tabby's default profile, Tabby's `+` button and new-tab hotkey SHALL open a tomux tab bound to a new tmux window. If the active tab, or the focused pane of a split, is a tomux tab whose profiles still exist and that shows no profile or session-name error, the window SHALL be created in that tab's host and session, whatever its connection state. Otherwise it SHALL be created in the default profile's host and session.
 
 #### Scenario: Plus with a tomux default profile
 - **GIVEN** the tomux profile `work-server` is Tabby's default profile and tabs for its session are open
@@ -41,6 +41,16 @@ When a tomux profile is set as Tabby's default profile, Tabby's `+` button and n
 - **WHEN** the user clicks `+`
 - **THEN** the new tab opens on the default profile's session
 
+#### Scenario: Active tab has an invalid session name
+- **GIVEN** the active tomux tab shows an error because its session name `a.b` contains a character tmux does not allow
+- **WHEN** the user clicks `+`
+- **THEN** the new tab opens on the default profile's session
+
+#### Scenario: Active tab's profile was deleted
+- **GIVEN** the active tab is a tomux tab of the profile `build-box`, and the user deleted `build-box` (or the SSH profile it uses) after the tab opened
+- **WHEN** the user clicks `+`
+- **THEN** the new tab opens on the default profile's session
+
 #### Scenario: Choosing another profile from the selector
 - **GIVEN** the tomux profile `work-server` is Tabby's default profile and the active tab is a tomux tab of session `ci`
 - **WHEN** the user chooses the tomux profile `db-box` in Tabby's profile selector
@@ -50,6 +60,11 @@ When a tomux profile is set as Tabby's default profile, Tabby's `+` button and n
 - **GIVEN** the tomux profile `work-server` is Tabby's default profile and the active tab is a tomux tab of session `ci`
 - **WHEN** the user chooses `work-server` in Tabby's profile selector
 - **THEN** the new tab opens bound to a new tmux window in `ci`, as with `+`
+
+#### Scenario: Switching a tomux tab to the default profile
+- **GIVEN** the tomux profile `work-server` is Tabby's default profile and the focused tab is a tomux tab of session `ci`
+- **WHEN** the user uses Tabby's "Switch profile" on that tab and picks `work-server`
+- **THEN** the tab is replaced by a tab bound to a new tmux window on `work-server`'s session, not `ci`
 
 ## ADDED Requirements
 

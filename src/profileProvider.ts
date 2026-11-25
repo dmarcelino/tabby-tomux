@@ -43,12 +43,16 @@ export class TomuxProfileProvider extends ProfileProvider<TomuxProfile> {
         // `+` and the new-tab hotkey open the default profile: they add a
         // window to the session of the tomux tab the user is looking at
         // instead (spec tomux-profile, change plus-follows-active-tab).
-        const followed = tabToFollow(profile.id, this.injector.get(ConfigService).store.terminal?.profile, this.activeTomuxTab())
+        const active = this.activeTomuxTab()
+        // A tab can outlive its profiles: check they still exist (design D4).
+        const profileIds = new Set(active ? (await this.injector.get(ProfilesService).getProfiles()).map(p => p.id) : [])
+        const followed = tabToFollow(profile.id, this.injector.get(ConfigService).store.terminal?.profile, active, id => profileIds.has(id))
+        const requested = await this.injector.get(TomuxService).tabInputs(profile, { kind: 'new' })
         return {
             type: TomuxTabComponent,
             inputs: (followed
-                ? followedTabInputs(followed)
-                : await this.injector.get(TomuxService).tabInputs(profile, { kind: 'new' })) as any,
+                ? followedTabInputs(followed, followed.parent instanceof SplitTabComponent ? followed.parent : null, requested)
+                : requested) as any,
         }
     }
 

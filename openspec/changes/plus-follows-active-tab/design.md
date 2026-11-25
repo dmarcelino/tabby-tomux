@@ -67,7 +67,10 @@ A pure function in `src/followActiveTab.ts` builds these inputs from a tab, so i
 
 ### D4. Follow whatever the connection state; fall back only on a profile error
 
-The active tomux tab is followed whether it is connected, reconnecting or dropped. A tab with `tomuxError` set (missing SSH profile, missing tomux profile after restore) is not followed: it cannot connect anywhere, so `+` uses the requested profile as today.
+The active tomux tab is followed whether it is connected, reconnecting or dropped. A tab that cannot connect anywhere is not followed, and `+` uses the requested profile as today. That is a tab:
+- with `tomuxError` set (SSH profile missing when the tab was created, tomux profile missing after restore);
+- whose session name `sessionNameError` rejects (the tab shows that error when it connects, not through `tomuxError`);
+- whose tomux profile or SSH profile was deleted after the tab opened (`tomuxError` is set only at creation). The provider reads the profile ids from `ProfilesService.getProfiles()`, only when there is a tomux tab to follow.
 
 - *Fall back while disconnected*: rejected. It brings back the reported problem in the very window the user is looking at, and adds a state check that matters only while a connection is down.
 - While the active tab is reconnecting, the new tab's `acquire` joins the same attempt.
@@ -83,9 +86,20 @@ A followed tab therefore gets a new input, `tomuxFollowed: true`. In `ngOnInit` 
 - *Return inputs whose properties cannot be overwritten*: rejected. It fights Tabby's code instead of working with it.
 - `disableDynamicTitle` needs nothing: tomux tabs always set it to `true` and read the user's setting from `tomuxProfile` (show-app-titles decision 5).
 
+### D6. Tell Tabby's "Switch profile" apart from `+` in the new tab
+
+Tabby's "Switch profile" (tab menu or hotkey) builds the replacement through `newTabParametersForProfile`, so `getNewTabParameters` runs while the tab being replaced is still the focused one. Picking the default profile there would follow that tab back into its own session, on a new window. Nothing in the call tells it apart from `+`: Tabby removes and destroys the old tab only after tomux returns.
+
+So a followed tab also gets the followed tab, the split that held it, and the inputs for the profile that was asked for (`tomuxFollowedFrom`, `tomuxUnfollowed`). In `ngOnInit`, before the session name is pinned, the tab checks whether the followed tab is still in that split (`followedTabWasReplaced`). With `+` it is. With "Switch profile", Tabby has already put the new tab in its place (`SplitTabComponent.replaceTab`), so the tab takes the requested profile's inputs and opens on its session. Both references are dropped after the check.
+
+- *Document the quirk*: rejected. The switch would leave the replaced tab's window running with no tab and open a new window in the same session, which looks like a lost window.
+- *Wrap Tabby's context menu or `switchTabProfile`*: rejected. Internals, and the hotkey path would need the same.
+- A tab that had no split when it was followed is never treated as replaced. Every Tabby tab sits in a split today.
+
 ## Risks / Trade-offs
 
 - [Choosing the default profile from the selector, a profile hotkey, a recent-profile entry or the command line also follows the active tab] → Stated in the spec and README.
+- [A followed tab leaves no trace of the tab it followed once that tab is gone] → The reference to the followed tab and the fallback inputs are dropped in `ngOnInit`, so a followed tab does not keep the old tab alive.
 - [tabby-local's "New terminal" item in a tab menu calls `openTab()` and follows the *active* tab, not the tab whose menu was opened] → Same rule as `+`; acceptable. Noted in README only if the manual check shows it can happen with tomux tabs.
 - [A future Tabby changes the `+` path so the profile loses its `id`] → `+` silently falls back to today's behaviour. Task 3.1 checks the current release; a unit test covers the decision for a missing id.
 - [Pressing `+` on a non-tomux tab in a Tabby window that has no connection to the default session still opens a tab for each of that session's windows] → Out of scope (proposal); README says so.
