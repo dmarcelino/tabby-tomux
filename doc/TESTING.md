@@ -183,6 +183,10 @@ Still not checked after the code-review fixes (task 4.2):
 
 Found while testing, not part of this change (issue #1): a restored tab that is never shown saves a recovery token without its window id. After a second restart it no longer reserves its window, so tomux opens an extra tab for that window, and showing the restored tab later creates a new window.
 
+## Home and End in application cursor mode (change fix-app-cursor-home-end, task 3.2), 2026-11-25
+
+The user tested the fix by hand in a running Tabby and reported that the Home and End keys work. The report did not name the Tabby version, the host or the programs used, and did not mention the arrow keys, so the arrow scenario in the change's spec is covered by unit tests only.
+
 ## `+` follows the active tab (change plus-follows-active-tab, tasks 3.1–3.3), 2026-11-25
 
 Setup: Tabby 1.0.238 on macOS (arm64), plugin built from the change's branch (389 unit tests), started with `TOMUX_DEV=1`. The test host runs Debian 13 with tmux 3.5a, reached through the SSH port forward. Default profile: the tomux profile for session `tomux-e2e`, given a red tab colour for these checks. A second tomux profile, with no colour, uses session `tomux-fresh` on the same host. Tabby was driven through its DevTools port. `+` was the real tab-bar button, and the new-tab hotkey was a real `⌘-T` key event. Choosing a profile "from the selector" called `ProfilesService.openNewTabForProfile` inside Angular's zone, as the selector's own callback does. The selector UI itself was not clicked. Every result was checked on the host with `tmux list-windows -a` and `tmux list-clients`.
