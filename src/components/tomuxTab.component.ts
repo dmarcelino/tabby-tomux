@@ -11,9 +11,9 @@ import { merge, Subscription } from 'rxjs'
 import { Logger, LogService, NotificationsService, RecoveryToken } from 'tabby-core'
 import { BaseTerminalTabComponent, ConnectableTerminalTabComponent } from 'tabby-terminal'
 import { BindIntent, connectIntent, decideBinding } from '../binding'
-import { followedTabLook, followedTabWasReplaced } from '../followActiveTab'
+import { followedTabWasReplaced } from '../followActiveTab'
 import { TomuxPaneSession } from '../paneSession'
-import type { TomuxProfile } from '../profile'
+import { profileTabLook, TomuxProfile } from '../profile'
 import { makeRecoveryToken } from '../recoveryToken'
 import { sessionNameError } from '../sessionName'
 import { SshControlTransport } from '../sshTransport'
@@ -168,7 +168,7 @@ export class TomuxTabComponent extends SSHTabComponent {
         if (this.tomuxFollowed) {
             // Tabby gave this tab the default profile's title, colour and icon
             // after the provider returned; use those of the profile it opened on.
-            const look = followedTabLook(this.tomuxProfile)
+            const look = profileTabLook(this.tomuxProfile)
             this.setTitle(look.title)
             this.color = look.color
             this.icon = look.icon

@@ -253,3 +253,30 @@ Afterwards, 2026-11-26: the user tested the branch of PR #12 by hand in Tabby an
 2026-11-26: the user tested the branch of PR #14 by hand in Tabby and reported that it worked. The report did not name the Tabby or tmux version, or which of the checks in tasks 5.1 and 5.2 were run (the `@tomux-order` values after a drag and after a hotkey move, a restart with tab restore off, a window created while Tabby was closed, and a restart with restore on).
 
 Not checked: task 5.3, whether `set-option -w … @tomux-order` and `#{@tomux-order}` work on a tmux older than 3.6 (the only version checked, locally, while writing the change). So the README states no minimum tmux version for this feature.
+
+## Profile colour on adopted tabs (change adopted-tab-profile-look, task 3.1), 2026-11-26
+
+Setup: Tabby 1.0.238 on macOS, test host Debian 13 with tmux 3.5a reached through a local port forward. Tabby was started with `TOMUX_DEV=1` and driven through its DevTools port, with the plugin linked to the change's branch. `log.txt` showed `tomux plugin loaded`. Two tomux profiles were added for this run and removed afterwards: `tomux-color` (colour `#cc0000`, icon `fas fa-server`) and `tomux-nocolor` (neither), each on its own new session with two windows. Profiles were opened with `ProfilesService.openNewTabForProfile`, as the profile selector does. Every `AppService.openNewTab` call was recorded. The title a tab was opened with, below, is the `title` input of that call, not read from the tab header. Each check also read the tab header's colour bar, and the host's `tmux list-windows` and `tmux list-clients`.
+
+| Check | Result |
+|---|---|
+| Open `tomux-color` on its session with windows `@20` and `@21`, no tab connected | The tab bound to `@20` and the extra tab for `@21` are both `#cc0000`, with the header bar drawn red, and both have the icon. The extra tab was opened with the title `tomux-color` and showed `tmux:1` once bound to its window. 2 windows, 1 client. |
+| `tmux new-window` in that session from the host | One new tab for `@24`, red, with the icon, opened with the title `tomux-color`. Tabby selected it, and it then showed `tmux:2`. |
+| The icon in the tab header | Not drawn with this Tabby's "show profile icon on tab" setting off. With the setting turned on in memory, all three headers drew the server icon. |
+| Open `tomux-nocolor` on its session with windows `@22` and `@23` | Neither tab has a colour, an icon or a header bar. 2 windows, 1 client. |
+| Set the `@21` tab to `#00aa00` as the tab menu's Color item does (`tab.color = value` on the tab, inside Angular's zone), quit Tabby with the Quit command and start it again | `@21` came back green, `@20` and `@24` red with the icon, and the `tomux-nocolor` tabs without a colour. All five windows were still on the host after the quit. |
+
+The tab menu itself was not clicked: on macOS it is a native menu, which DevTools can't reach, so its action was run directly.
+
+### Second run: unfixed build, several extra tabs, older saved tabs, 2026-11-26
+
+Same setup and profiles. `tomux-color`'s session had four windows this time. The unfixed build was `main` at 882e63a, built from `git archive` into a temporary folder and linked in place of the branch.
+
+| Check | Result |
+|---|---|
+| Unfixed build: open `tomux-color` on its session with windows `@25` to `@28`, no tab connected | The tab bound to `@25` is `#cc0000` with the icon. The three extra tabs for `@26`, `@27` and `@28` were opened with no title, colour or icon, and their headers have no colour bar. This is the reported bug. |
+| Quit, link the fixed build, start Tabby again (tab restore on) | As saved: the `@25` tab red with the icon, the three extra tabs without a colour (the README's note on tabs an older tomux opened). Restored tabs that were not shown were not bound to their windows. |
+| Fixed build, after closing those tabs: open `tomux-color` on a new session with windows `@31` to `@34` | All four tabs `#cc0000`, with the icon and a red header bar. The three extra tabs were opened with the title `tomux-color`. Only `@34` ended up selected, yet all three extra tabs were bound without a click and showed `tmux:1` to `tmux:3`: tabs tomux opens itself connect at once. Only restored tabs wait until they are first shown. 4 windows, 1 client. |
+| `tmux new-window` in that session | One new tab for `@35`, red, with the icon, opened with the title `tomux-color`, then `tmux:4`. |
+| Open `tomux-nocolor` on its session with windows `@29` and `@30` | Neither tab has a colour, an icon or a header bar. 2 windows, 1 client. |
+| Set the `@32` tab to `#00aa00` as in the first run, quit with the Quit command and start again | `@32` came back green, `@31` and `@33` to `@35` red with the icon, and the `tomux-nocolor` tabs without a colour. All seven windows were still on the host after the quit. |
