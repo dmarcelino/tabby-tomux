@@ -224,3 +224,20 @@ Same setup (Tabby 1.0.238 on macOS, Debian 13 test host with tmux 3.5a, driven t
 | Tabby's **Switch profile** to the default profile on the only tab of `tomux-fresh` (Tabby's own `switchTabProfile`, with the profile picker stubbed to return the default) | Before the fix: the replacement followed the replaced tab into `tomux-fresh` on a new window. After the fix (design D6): the replacement opens on a new window in the default session. The replaced tab's window keeps running: Tabby destroys the old tab without a user close, so tomux does not kill its window. |
 | Switch profile to the default on the focused pane of a two-pane `tomux-fresh` split | That pane becomes a tab on the default session. The other pane is unchanged. |
 | After the fix: `+`, `⌘-T`, and `+` from a pane of a two-pane split, each on a `tomux-fresh` tab | Each still follows: one new window in `tomux-fresh`. |
+
+## Text style after a restored screen (change reset-style-after-snapshot, task 3.2), 2026-11-26
+
+Setup: Tabby 1.0.238 on macOS, test host Debian 13 with tmux 3.5a reached through a local port forward. Tabby was started with `TOMUX_DEV=1` and driven through its DevTools port. The restored tab's xterm.js buffer was read cell by cell. The first run used the unfixed build (`main` at 00c599d), the second the change's branch. `log.txt` showed `tomux plugin loaded` both times.
+
+In window `@2` of session `tomux-e2e`, a script drew `status ESC[4mlast ESC[0m` on the bottom row, with nothing written after it, so tmux's capture of the pane ends with underline on. It then redrew row 3 every second as `ESC[33m redrawn NNNNN ESC[39m`, which sets only the colour. With the tab open, Tabby was quit and started again, and the restored tab was shown.
+
+| Check | Unfixed build | Fixed build |
+|---|---|---|
+| Cells of the live-redrawn `redrawn NNNNN` line that are underlined | 12 of 12 (counter at 00030 and 00052) | 0 of 12 (counter at 00082 and 00090: it was still redrawing) |
+| Colour of that line | yellow | yellow |
+| `last` on the bottom row (underlined by the program) | underlined | underlined |
+| Bash prompt in window `@7`, redrawn after the resize on restore (the script there had been stopped) | underlined (screenshot) | 0 of 12 cells underlined |
+
+Not checked in this run: restoring a tab that runs Claude Code. The test host has no Claude Code, and the only Claude Code on the test machine runs in tmux sessions in daily use, which a tomux tab would resize.
+
+Afterwards, 2026-11-26: the user tested the branch of PR #11 by hand in Tabby and reported that it worked. The report did not name the Tabby version or the programs in the restored tabs.

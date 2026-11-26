@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FakeTmux, settle } from './tmux/fakeTmux.testing'
 import { TomuxConnection } from './tmux/connection'
 import { TomuxPaneSession, WORKING_DIRECTORY_TIMEOUT_MS } from './paneSession'
+import { paneSwitchMarker } from './tabTitle'
 
 // tabby-terminal needs Tabby's Angular runtime; a minimal BaseSession is enough
 // here. vi.mock is hoisted above the imports.
@@ -73,12 +74,12 @@ describe('TomuxPaneSession working directory', () => {
 
 describe('TomuxPaneSession start', () => {
     const CAPTURE = 'capture-pane -p -e -J -S - -t %0'
-    const CURSOR = 'display-message -p -t %0 "#{cursor_x} #{cursor_y}"'
+    const CURSOR = 'display-message -p -t %0 "#{cursor_x} #{cursor_y} #{pane_width} #{pane_height}"'
 
     async function adoptedSession (): Promise<InstanceType<typeof TomuxPaneSession> & { emitted: string[] }> {
         const tmux = new FakeTmux()
         tmux.overrides.set(CAPTURE, ['history line', '$ prompt'])
-        tmux.overrides.set(CURSOR, ['2 1'])
+        tmux.overrides.set(CURSOR, ['2 1 80 24'])
         const conn = await TomuxConnection.open(tmux, 'main')
         return new TomuxPaneSession(logger as any, conn, '%0', () => undefined) as any
     }
@@ -87,15 +88,51 @@ describe('TomuxPaneSession start', () => {
         const session = await adoptedSession()
         await session.start({ adopt: true })
         const text = session.emitted.join('')
-        expect(text).toContain('history line')
+        expect(text).toContain('history line\r\n$ prompt')
+        expect(text).toContain('$ prompt\x1b[0m\x1b[2;3H')
         expect(text.startsWith('\x1b[2J')).toBe(false)
+    })
+
+    // tmux's capture-pane -e never ends with a reset: when the last captured
+    // cell is styled, the style stays on after the snapshot and would carry
+    // over to the program's next redraw.
+    async function sessionEndingStyled (): Promise<InstanceType<typeof TomuxPaneSession> & { emitted: string[] }> {
+        const tmux = new FakeTmux()
+        tmux.overrides.set(CAPTURE, ['history line', 'next \x1b[4mlast'])
+        tmux.overrides.set(CURSOR, ['2 1 80 24'])
+        const conn = await TomuxConnection.open(tmux, 'main')
+        return new TomuxPaneSession(logger as any, conn, '%0', () => undefined) as any
+    }
+
+    it('resets the text style after an adopted snapshot, before moving the cursor', async () => {
+        const session = await sessionEndingStyled()
+        await session.start({ adopt: true })
+        expect(session.emitted.join('')).toContain('next \x1b[4mlast\x1b[0m\x1b[2;3H')
+    })
+
+    it('resets the text style after the snapshot of a newly active pane', async () => {
+        const session = await sessionEndingStyled()
+        await session.start()
+        session.switchPane('%0')
+        await settle()
+        expect(session.emitted.join('')).toContain('next \x1b[4mlast\x1b[0m\x1b[2;3H')
+    })
+
+    it('starts a newly active pane\'s redraw from the default style, right after the marker', async () => {
+        const session = await adoptedSession()
+        await session.start()
+        session.switchPane('%0')
+        await settle()
+        expect(session.emitted.join('')).toContain(paneSwitchMarker('%0') + '\x1b[0m\x1b[2J\x1b[3J\x1b[H\x1b[0mhistory line')
     })
 
     it('clears screen and scrollback before redrawing a reconnecting tab', async () => {
         const session = await adoptedSession()
         await session.start({ adopt: true, redraw: true })
         const text = session.emitted.join('')
-        expect(text.startsWith('\x1b[2J\x1b[3J\x1b[H')).toBe(true)
-        expect(text).toContain('history line')
+        // Reset first: earlier output may have left a style on, and ESC[2J
+        // paints with the current background (design decision 1b).
+        expect(text.startsWith('\x1b[0m\x1b[2J\x1b[3J\x1b[H\x1b[0mhistory line')).toBe(true)
+        expect(text).toContain('$ prompt\x1b[0m\x1b[2;3H')
     })
 })
