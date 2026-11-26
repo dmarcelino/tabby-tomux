@@ -253,3 +253,26 @@ Afterwards, 2026-11-26: the user tested the branch of PR #12 by hand in Tabby an
 2026-11-26: the user tested the branch of PR #14 by hand in Tabby and reported that it worked. The report did not name the Tabby or tmux version, or which of the checks in tasks 5.1 and 5.2 were run (the `@tomux-order` values after a drag and after a hotkey move, a restart with tab restore off, a window created while Tabby was closed, and a restart with restore on).
 
 Not checked: task 5.3, whether `set-option -w … @tomux-order` and `#{@tomux-order}` work on a tmux older than 3.6 (the only version checked, locally, while writing the change). So the README states no minimum tmux version for this feature.
+
+## Alternate screen after a redraw (change restore-alternate-screen, task 4.3), 2026-11-26
+
+Before the change, the user reproduced the bug by hand in Tabby: Claude Code started and exited normally came out clean, and so did Reconnect while it ran, but exiting it after a Tabby restart left its screen behind, with the shell's output printed over it from the top-left corner.
+
+Setup: Tabby 1.0.238 on macOS, started with `TOMUX_DEV=1` and driven through its DevTools port, plugin linked to the change's branch (455 unit tests). The SSH host was the same Mac (`127.0.0.1:22`), with tmux 3.8 and a throwaway session `tomux-alt`; the usual Debian test host was not reachable. Each check read the tab's xterm.js state (active buffer, cursor, cursor visibility, mouse tracking mode, every buffer line) and compared the visible screen line by line with `tmux capture-pane -p` of the pane. Full-screen programs: Claude Code 2.1.332 (alternate screen, mouse tracking on, cursor shown), and a small script that enters the alternate screen, hides the cursor and turns on mouse modes 1002 and 1006, and turns all of that off again on exit. Programs were exited with `tmux send-keys`.
+
+| Check | Result |
+|---|---|
+| Claude Code running, Tabby quit and started again | Tab restored on the alternate screen, screen as tmux's, cursor where tmux has it, mouse tracking `any`. Log: `Captured pane …, alternate screen` |
+| Then Claude Code exited | Normal screen, identical to tmux's: the history (`old line 1`…`50`, each once) and the prompt on the row tmux restored. No Claude Code text anywhere in the buffer. Cursor shown, mouse off |
+| Script running (cursor hidden, mouse 1002/1006), Tabby restarted | Alternate screen, cursor hidden, mouse `drag`, screen as tmux's |
+| Then the script exited | Normal screen as tmux's, cursor shown, mouse off |
+| Reconnect while the script ran, then the script exited | Alternate screen with cursor hidden and mouse `drag` after Reconnect; after the exit, normal screen as tmux's with no script text in the buffer |
+| Connection dropped (tmux control client killed with SIGKILL, so no `%exit`), script exited, then Reconnect | Normal screen as tmux's, history once, no script text, cursor shown, mouse off |
+| Same with SIGTERM | tmux sends `%exit`, which tomux treats as the session ending: the tab closes (existing behaviour, not part of this change) |
+| Second pane in the window, active pane changed script → shell → script, then B→A→B in one tmux command | Each redraw on the right screen with the right cursor visibility and mouse mode; the quick switch ended on the shell pane. Screen as tmux's each time |
+| Plain shell pane, Tabby restarted | Normal screen as tmux's, cursor shown, mouse off |
+| Claude Code running, Tabby quit, its window made smaller (120x33 → 97x25), started again | tmux resized to 97x25 before the capture; screen as tmux's on the alternate screen; after Claude Code exited, normal screen as tmux's with no Claude Code text |
+
+Found and fixed during this run: switching back to the script's pane drew its screen from the row of the shell's saved cursor instead of the top, because `ESC[?1049h` clears the alternate screen without moving the cursor. Claude Code's restore had looked right only because the shell's cursor was on the last row and Claude Code's screen fills every row. The redraw now moves the cursor home after the switch (unit test in `src/paneRedraw.spec.ts`), and the pane-switch checks above were run again on the fixed build.
+
+Not checked: tmux older than 3.8 (the formats and `capture-pane -a` on tmux 2.1), the Debian test host, and mouse input reaching the program (only the tab's mouse mode was read, no clicks were sent).

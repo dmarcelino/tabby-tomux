@@ -46,6 +46,7 @@
         "@ng-bootstrap/ng-bootstrap": "^14.2.0",
         "@ngtools/webpack": "^15.2.11",
         "@types/node": "^20.3.1",
+        "@xterm/headless": "^6.0.0",
         "babel-loader": "^10.0.0",
         "css-loader": "^7.1.2",
         "rxjs": "^7.8.1",
