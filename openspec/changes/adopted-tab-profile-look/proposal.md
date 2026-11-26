@@ -6,7 +6,7 @@ When tomux opens a tab for a tmux window no tab is bound to, the tab gets no tab
 
 ## What Changes
 
-- A tab tomux opens for an unclaimed window, when a session connects or when a window appears later, shows the colour and icon of its tomux profile. Until the tab is first shown and tmux reports the window's name, it shows the profile's name. This is the look Tabby gives a tab opened from that profile. A profile without a colour or icon gives the tab none.
+- A tab tomux opens for an unclaimed window, when a session connects or when a window appears later, shows the colour and icon of its tomux profile. Until tmux reports the window's name, it shows the profile's name. This is the look Tabby gives a tab opened from that profile. A profile without a colour or icon gives the tab none.
 - Restored tabs keep the colour and icon saved with them, as today, including a colour the user picked from the tab menu.
 - README: the extra tabs opened for a session's other windows get the profile's colour and icon.
 
