@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 /**
  * Glue between Tabby and the tomux core: one registry of control connections
- * per Tabby window, the close-intent tracker, and the code that opens tabs
- * for tmux windows no tab has claimed (design D4, D5, D6).
+ * per Tabby window, the close-intent tracker, the code that opens tabs
+ * for tmux windows no tab has claimed (design D4, D5, D6), and the sync that
+ * records the tab order in tmux (change restore-tab-order, design D5).
  */
 import { Injectable, Injector, NgZone } from '@angular/core'
-import { AppService, BaseTabComponent, Logger, LogService, PartialProfile, ProfilesService } from 'tabby-core'
+import { debounceTime, interval, merge, Subject, Subscription } from 'rxjs'
+import { AppService, BaseTabComponent, BOOTSTRAP_DATA, BootstrapData, Logger, LogService, PartialProfile, ProfilesService, SplitTabComponent } from 'tabby-core'
 import { BindIntent } from './binding'
 import { acquireTracked } from './acquire'
 import { planAdoption, Reservations } from './reservations'
@@ -14,11 +16,19 @@ import type { TomuxProfile } from './profile'
 import { TomuxConnection } from './tmux/connection'
 import { ConnectionRegistry } from './tmux/connectionRegistry'
 import { CommandFlags } from './tmux/controlClient'
+import { compareByRecordedOrder, openInOrder, planOrderWrites } from './tabOrder'
 
 /** How long after a connection opens before unclaimed windows get their own tabs. */
 const ADOPTION_GRACE_MS = 2000
 /** Upper bound on waiting for restored tabs to finish binding. */
 const ADOPTION_MAX_WAIT_MS = 15000
+/** Quiet time after a tab-bar change or a bind before the tab order is recorded in tmux. */
+const ORDER_SYNC_DEBOUNCE_MS = 300
+/**
+ * Fallback check of the tab order: Tabby's move-tab hotkeys (swapTabs) don't
+ * emit tabsChanged$. Only compares in memory unless the order changed.
+ */
+const ORDER_SYNC_INTERVAL_MS = 10000
 
 interface ConnectionState {
     pendingBinds: number
@@ -27,6 +37,10 @@ interface ConnectionState {
     tomuxProfile: TomuxProfile
     sshProfile: PartialProfile<any>
     key: string
+    /** Set once adoption has opened its tabs: only then may `@tomux-order` be written (design D5). */
+    orderReady: boolean
+    /** Each window's `@tomux-order` in tmux as far as tomux knows (read at adoption, then written). */
+    written: Map<string, number>
 }
 
 export interface TomuxTabInputs {
@@ -54,6 +68,11 @@ export class TomuxService {
 
     private logger: Logger
     private states = new WeakMap<TomuxConnection, ConnectionState>()
+    /** Connections set up by this service and not yet ended, for the tab-order sync. */
+    private connections = new Set<TomuxConnection>()
+    private orderHint = new Subject<void>()
+    private orderSync: Subscription | null = null
+    private mainWindow: boolean | null = null
 
     /*
      * Tabby services are looked up lazily: ProfilesService and AppService
@@ -128,6 +147,8 @@ export class TomuxService {
         if (state) {
             state.pendingBinds = Math.max(0, state.pendingBinds - 1)
         }
+        // A tab bound (or failed to bind) a window: its position may need recording.
+        this.hintOrder()
     }
 
     /** Wraps a tab's `new-window` + claim so `%window-add` handling can wait for it. */
@@ -148,15 +169,92 @@ export class TomuxService {
             tomuxProfile: ctx.tomuxProfile,
             sshProfile: ctx.sshProfile,
             key: ctx.key,
+            orderReady: false,
+            written: new Map(),
         }
         this.states.set(conn, state)
 
         conn.events$.subscribe(event => {
             if (event.type === 'window-add') {
                 void this.onWindowAdd(conn, event.windowId)
+            } else if (event.type === 'window-close') {
+                state.written.delete(event.windowId)
+            }
+        })
+        this.connections.add(conn)
+        this.startOrderSync()
+        void conn.closed.then(() => {
+            this.connections.delete(conn)
+            if (!this.connections.size) {
+                this.stopOrderSync()
             }
         })
         void this.adoptLeftovers(conn)
+    }
+
+    /**
+     * Records the tab order in tmux while this is the main Tabby window and
+     * it has connections (design D5): after tab-bar changes and binds, and on
+     * a slow interval for the moves Tabby doesn't announce.
+     */
+    private startOrderSync (): void {
+        if (this.orderSync || !this.isMainWindow()) {
+            return
+        }
+        const sync = new Subscription()
+        sync.add(this.app.tabsChanged$.subscribe(() => this.hintOrder()))
+        // The timers must start outside Angular's zone, or every run would
+        // trigger change detection; hintOrder() hands events over to it.
+        this.zone.runOutsideAngular(() => {
+            sync.add(merge(
+                this.orderHint.pipe(debounceTime(ORDER_SYNC_DEBOUNCE_MS)),
+                interval(ORDER_SYNC_INTERVAL_MS),
+            ).subscribe(() => this.syncOrder()))
+        })
+        this.orderSync = sync
+    }
+
+    /** Asks for a sync soon. Emits outside Angular's zone so the debounce timer starts there. */
+    private hintOrder (): void {
+        this.zone.runOutsideAngular(() => this.orderHint.next())
+    }
+
+    private stopOrderSync (): void {
+        this.orderSync?.unsubscribe()
+        this.orderSync = null
+    }
+
+    /** Only the main Tabby window records the order: its tabs are the ones Tabby restores. */
+    private isMainWindow (): boolean {
+        if (this.mainWindow === null) {
+            const data = this.injector.get<BootstrapData | null>(BOOTSTRAP_DATA as any, null)
+            if (!data) {
+                this.logger.warn('Tabby did not provide BOOTSTRAP_DATA: the tab order will not be recorded in tmux')
+            }
+            this.mainWindow = !!data?.isMainWindow
+        }
+        return this.mainWindow
+    }
+
+    /** Sends the `@tomux-order` values that differ from the tab bar. */
+    private syncOrder (): void {
+        const bar = this.app.tabs.flatMap(tab => tab instanceof SplitTabComponent ? tab.getAllTabs() : [tab])
+        for (const conn of this.connections) {
+            const state = this.states.get(conn)
+            if (!state?.orderReady || !conn.isLive) {
+                continue
+            }
+            // Reserved windows too: a restored or adopted tab connects only once shown.
+            const windows = [
+                ...conn.ownedWindows(),
+                ...this.reservations.entries(state.key).map(r => [r.windowId, r.owner] as [string, object]),
+            ]
+            for (const [windowId, order] of planOrderWrites(bar, windows, state.written)) {
+                // Recorded before tmux answers, so a refused write is not retried in a loop.
+                state.written.set(windowId, order)
+                void conn.client.setWindowOrder(windowId, order).catch(() => null)
+            }
+        }
     }
 
     /** After restored tabs had their chance, give every unclaimed window its own tab. */
@@ -172,6 +270,7 @@ export class TomuxService {
         }
         const windows = await conn.client.listWindows().catch(() => null)
         if (!windows) {
+            this.logger.warn(`Could not list the windows of session ${conn.sessionName}: no tabs opened for its other windows, and its tab order will not be recorded in tmux`)
             return
         }
         // Close restored tabs whose window was closed while Tabby was not
@@ -181,8 +280,33 @@ export class TomuxService {
         for (const owner of plan.close) {
             (owner as { onReservedWindowGone?: () => void }).onReservedWindowGone?.()
         }
-        for (const id of plan.open) {
-            this.openAdoptTab(state, conn, id)
+        // What tmux has recorded, so the sync only sends changes. Writing starts
+        // after the tabs below are open, never before this read (design D5).
+        for (const w of windows) {
+            if (w.order !== null) {
+                state.written.set(w.id, w.order)
+            }
+        }
+        // Prepare every tab at once, then add them to the tab bar in recorded
+        // tab order (change restore-tab-order, design D4).
+        const byId = new Map(windows.map(w => [w.id, w]))
+        const ordered = plan.open
+            .map(id => byId.get(id)!)
+            .sort(compareByRecordedOrder)
+            .map(w => w.id)
+        try {
+            const failures = await openInOrder(
+                ordered,
+                id => this.prepareAdoptTab(state, conn, id),
+                (_id, inputs) => this.openAdoptTab(inputs),
+                openAll => this.zone.run(openAll),
+            )
+            for (const { id, error } of failures) {
+                this.logger.error(`Could not open a tab for tmux window ${id}:`, error)
+            }
+        } finally {
+            state.orderReady = true
+            this.hintOrder()
         }
     }
 
@@ -204,20 +328,24 @@ export class TomuxService {
         }
         await Promise.allSettled([...state.creations])
         if (conn.isLive && !conn.ownerOf(windowId) && !this.reservations.isReservedByOther(state.key, windowId)) {
-            this.openAdoptTab(state, conn, windowId)
+            const inputs = await this.prepareAdoptTab(state, conn, windowId)
+            this.zone.run(() => this.openAdoptTab(inputs))
         }
     }
 
-    private openAdoptTab (state: ConnectionState, conn: TomuxConnection, windowId: string): void {
+    /** Inputs for a tab that adopts `windowId` (async: looks up the SSH profile). */
+    private async prepareAdoptTab (state: ConnectionState, conn: TomuxConnection, windowId: string): Promise<TomuxTabInputs> {
+        const inputs = await this.tabInputs(state.tomuxProfile, { kind: 'adopt', windowId })
+        inputs.tomuxSessionName = conn.sessionName
+        return inputs
+    }
+
+    /** Adds an adopted tab at the end of the tab bar. Call inside Angular's zone, or the tab never renders (spike 2). */
+    private openAdoptTab (inputs: TomuxTabInputs): void {
         const type = this.tabComponent
-        if (!type) {
-            return
+        if (type) {
+            this.app.openNewTab({ type, inputs: inputs as any })
         }
-        void this.tabInputs(state.tomuxProfile, { kind: 'adopt', windowId }).then(inputs => {
-            inputs.tomuxSessionName = conn.sessionName
-            // Tab creation must run inside Angular's zone or the tab never renders (spike 2).
-            this.zone.run(() => this.app.openNewTab({ type, inputs: inputs as any }))
-        })
     }
 }
 

@@ -24,14 +24,14 @@ Status: early development, tested against Tabby 1.0.238 and tmux 3.5a.
 ## How it works
 
 - **One tab per tmux window, one pane per tab.** Each tomux tab shows one window of the tmux session. If a window has several tmux panes, the tab shows the active pane and the others keep running.
-- **Opening the profile:** if the session doesn't exist, tomux creates it and the tab shows its first window. If it exists, the tab shows its lowest-numbered window, and the session's other windows open as extra tabs. Once connected, opening the profile again creates a new window.
+- **Opening the profile:** if the session doesn't exist, tomux creates it and the tab shows its first window. If it exists, the tab shows the first window in your last tab order, and the session's other windows open as extra tabs in that order (by window number when tomux has no recorded order, for example for windows created while Tabby was closed). Once connected, opening the profile again creates a new window.
 - **Windows created elsewhere** (tmux's new-window key, another computer) open as new tabs.
 - **Titles:** a tab shows its tmux window's name. Renaming in tmux renames the tab. Renaming the tab in Tabby renames the tmux window.
   - A window you haven't named is called `tmux:<index>`. Its tab shows the title the program in it sets, as a local terminal tab does. Claude Code, for example, names the tab after its task. tomux never copies that title into tmux.
   - A name you gave the window wins over the program's title. To make the tab follow the program again, rename it to `tmux:<index>`, in Tabby or in tmux.
   - If your shell sets the terminal title at every prompt (many bash and zsh setups do), unnamed tabs show that title, for example `user@host: ~/src`, instead of `tmux:<index>`. To keep `tmux:<index>`, turn on **Disable dynamic tab title** in the tomux profile.
   - After a reconnect, a restart or a pane switch, the tab shows the title tmux remembers for the active pane.
-- **Tabby's tab hotkeys** (next/previous tab, go to tab N, move tab) work as usual. Moving a tab doesn't reorder windows in tmux.
+- **Tabby's tab hotkeys** (next/previous tab, go to tab N, move tab) work as usual. Moving a tab doesn't reorder windows in tmux. Instead, tomux records each window's tab position in the tmux window option `@tomux-order` and uses it whenever it opens a session's tabs itself, for example with Tabby's tab restore turned off or on another computer. Only the main Tabby window records it.
 - **Toolbar:** like an SSH tab, a tomux tab has Tabby's toolbar (hover the top of the tab, or pin it). It shows `user@host:port` and the tmux session name, and offers:
   - **SFTP:** opens Tabby's SFTP browser on the same SSH connection, starting in the folder the tab's shell is in (tmux reports it, so no shell setup is needed). The tab's context menu ("Open SFTP panel") and Tabby's SFTP hotkey open it too.
   - **Ports:** Tabby's port forwarding dialog. Forwards belong to the host's SSH connection, so every tab using that connection (all tomux tabs of the host, and SSH tabs sharing the connection) sees the same forwards, and they stay up while any of those tabs is connected. Forwards set in the SSH profile are active as well.

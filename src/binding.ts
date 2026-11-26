@@ -3,6 +3,7 @@
  * Which tmux window a tomux tab binds to (design D5, specs tmux-window-tabs,
  * tmux-tab-recovery and tomux-profile). Pure, so every rule is unit-tested.
  */
+import { compareByRecordedOrder } from './tabOrder'
 import type { TmuxWindow } from './tmux/controlClient'
 
 export type BindIntent =
@@ -27,7 +28,7 @@ export interface BindContext {
      * True for the first `new` bind on a connection this tab caused to open:
      * then the tab takes an existing window instead of creating one (the
      * session's only window if the connection created the session, otherwise
-     * its lowest-numbered unclaimed window).
+     * its first unclaimed window in recorded tab order, see tabOrder.ts).
      */
     firstBind: boolean
 }
@@ -61,7 +62,7 @@ export function decideBinding (ctx: BindContext): BindDecision {
             if (ctx.firstBind) {
                 const unclaimed = windows
                     .filter(w => !isOwned(w.id))
-                    .sort((a, b) => a.index - b.index)
+                    .sort(compareByRecordedOrder)
                 if (unclaimed.length) {
                     return { action: 'bind', window: unclaimed[0] }
                 }
@@ -71,7 +72,7 @@ export function decideBinding (ctx: BindContext): BindDecision {
     }
 }
 
-/** Windows no tab has claimed, lowest index first: opened as extra tabs after restore. */
+/** Windows no tab has claimed, in recorded tab order (tabOrder.ts): opened as extra tabs after restore. */
 export function unclaimedWindows (windows: TmuxWindow[], isOwned: (windowId: string) => boolean): TmuxWindow[] {
-    return windows.filter(w => !isOwned(w.id)).sort((a, b) => a.index - b.index)
+    return windows.filter(w => !isOwned(w.id)).sort(compareByRecordedOrder)
 }
