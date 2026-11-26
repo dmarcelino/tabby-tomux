@@ -361,4 +361,17 @@ Not checked: tmux older than 3.8, the Debian test host, mouse clicks reaching a 
 
 The user ran the change's scenarios in a running Tabby against a real tmux and reported them successful: restart twice without showing a restored tab, kill that tab's window while Tabby is closed, and close an unshown restored tab then reopen it. The details of that run (versions, host, window ids) were not recorded.
 
+A second run, recorded here: Tabby 1.0.238 on macOS, started with `TOMUX_DEV=1` and driven through its DevTools port, plugin linked to the change's branch (481 unit tests). `log.txt` showed `tomux plugin loaded`. The SSH host was the same Mac (`127.0.0.1:22`) with tmux 3.8 and a throwaway session `tomux-unshown`, opened by a tomux profile added for this run and removed afterwards. The profile opened window `@146`, and `tmux new-window` from outside added `@147` (`second`), `@148` (`killme`) and `@149` (`closeme`). With the Welcome tab selected, Tabby was quit with `HostAppService.quit()`. Tabby selects the last restored tab, so `closeme` was shown at each start and the other tabs were not. User close was `AppService.closeTab(tab, true)` and reopen was `AppService.reopenLastTab()`, the calls Tabby's own close and reopen make. Saved tokens were read from Tabby's `tabsRecovery`, and each result was checked on the host with `tmux list-windows` and `tmux list-clients`.
+
+| Check | Result |
+|---|---|
+| Before the first quit | Four tabs bound to `@146` to `@149`. `tabsRecovery` had each window id |
+| First restart | Tabs back in order. Only `closeme` bound, the other three unbound with `adopt` intents. `tabsRecovery`, saved again by the new build, still had `@146`, `@147` and `@148` for the unbound tabs. 1 control client, same four windows |
+| Close the unshown `@146` tab, then reopen the last closed tab | The reopen-stack token had `windowId: @146` and `userClosed`. `@146` was not killed by the close. The reopened tab bound `@146`, at the end of the tab bar. No new window |
+| `tabsRecovery` before the second quit | `@147`, `@148`, `@149`, `@146`: `@147` and `@148` were never shown and still had their windows |
+| `@148` killed on the host while Tabby was closed, then the second restart | The `killme` tab closed itself (`log.txt`: "tmux window @148 no longer exists"). No new window |
+| After the second restart, `second` (never shown since the first quit) selected | Tabs `second`, `closeme`, `@146` in order, no extra tab. `second` bound `@147` and showed its shell. Windows `@146`, `@147`, `@149` only, 1 control client |
+
+Not checked in this run: tokens saved by a build without this change (the note below is from the code, not from a run), the Debian test host, tmux older than 3.8.
+
 Tabs saved by a build without this change have no window id in their token. They come back as new-window tabs once. To avoid that, show or close each restored tab once before quitting Tabby with the new build.
