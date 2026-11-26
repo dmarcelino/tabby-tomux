@@ -51,13 +51,25 @@ export function pickDisplayTitle (input: DisplayTitleInput): string {
 }
 
 /**
+ * A Kitty graphics command as tmux stores it: `G`, comma-separated
+ * `<letter>=<value>` keys (values have no spaces), then `;` and a payload, or
+ * nothing (change ignore-kitty-graphics-pane-title, design decision 2).
+ */
+const KITTY_GRAPHICS_COMMAND = /^G[a-zA-Z]=[^,;\s]*(?:,[a-zA-Z]=[^,;\s]*)*(?:;|$)/u
+
+/**
  * The program title from tmux's `#{pane_title}`, or null when no program has
  * set one: tmux starts every pane with the host name as its title, and an
  * empty OSC title leaves it empty.
+ *
+ * Also null for a Kitty graphics command (`ESC _ G … ESC \`, such as the
+ * image-support query). tmux stores any APC sequence as the pane title, for
+ * compatibility with screen, so it replaces the program's real title. xterm.js
+ * ignores APC, so a live tab never showed it; only a reattach reads it back.
  */
 export function programTitleFromPane (paneTitle: string, host: string): string | null {
     const title = paneTitle.trim()
-    if (!title || title === host.trim()) {
+    if (!title || title === host.trim() || KITTY_GRAPHICS_COMMAND.test(title)) {
         return null
     }
     return title
