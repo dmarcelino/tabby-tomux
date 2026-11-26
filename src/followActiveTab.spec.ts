@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import { describe, expect, it } from 'vitest'
-import { activeTomuxTab, FollowableTab, followedTabInputs, followedTabLook, followedTabWasReplaced, tabToFollow } from './followActiveTab'
+import { activeTomuxTab, FollowableTab, followedTabInputs, followedTabWasReplaced, tabToFollow } from './followActiveTab'
 import type { TomuxTabInputs } from './tomux.service'
 import type { TomuxProfile } from './profile'
 
@@ -130,22 +130,5 @@ describe('followedTabWasReplaced', () => {
 
     it('is false for a tab that had no split', () => {
         expect(followedTabWasReplaced(tab, null)).toBe(false)
-    })
-})
-
-describe('followedTabLook', () => {
-    it('takes name, colour and icon from the tomux profile', () => {
-        expect(followedTabLook(tomuxProfile('build-box', 'ci', { color: '#00f', icon: 'fas fa-box' })))
-            .toEqual({ title: 'build-box', color: '#00f', icon: 'fas fa-box' })
-    })
-
-    it('clears colour and icon the profile does not have', () => {
-        expect(followedTabLook(tomuxProfile('build-box', 'ci')))
-            .toEqual({ title: 'build-box', color: null, icon: null })
-    })
-
-    it('treats the empty colour and icon of a profile config proxy as none', () => {
-        expect(followedTabLook(tomuxProfile('build-box', 'ci', { color: '', icon: '' })))
-            .toEqual({ title: 'build-box', color: null, icon: null })
     })
 })
