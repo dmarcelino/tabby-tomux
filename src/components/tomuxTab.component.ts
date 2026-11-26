@@ -10,13 +10,14 @@ import { Component, NgZone, ViewChild, ViewContainerRef } from '@angular/core'
 import { merge, Subscription } from 'rxjs'
 import { Logger, LogService, NotificationsService, RecoveryToken } from 'tabby-core'
 import { BaseTerminalTabComponent, ConnectableTerminalTabComponent } from 'tabby-terminal'
-import { BindIntent, connectIntent, decideBinding } from '../binding'
+import { BindIntent, connectIntent, decideBinding, describeIntent } from '../binding'
 import { followedTabWasReplaced } from '../followActiveTab'
 import { TomuxPaneSession } from '../paneSession'
 import { profileTabLook, TomuxProfile } from '../profile'
 import { makeRecoveryToken } from '../recoveryToken'
 import { sessionNameError } from '../sessionName'
-import { SshControlTransport } from '../sshTransport'
+import { connectionLogLine, withConnectContext } from '../connectionLog'
+import { SshControlTransport, sshSessionNumber } from '../sshTransport'
 import { installSftpPanelAccessor, loadTabbySsh, openSftpPanelForTab, repairSftpPanelAccessor, resolveSftpPanel, SftpPanelHandle } from '../tabbyAdapter'
 import { SftpPanelControl } from '../sftpPanelControl'
 import { SingleFlight } from '../singleFlight'
@@ -307,14 +308,31 @@ export class TomuxTabComponent extends SSHTabComponent {
 
         const sshSession = this.sshSession!
         const key = connectionKey(this.profile as any, this.sessionName)
+        // Which SSH session tmux runs on, to diagnose failures at startup. Tabs
+        // share the connection the first tab opened, on that tab's session.
+        const logContext = {
+            sessionLabel: `SSH session #${sshSessionNumber(sshSession)}`,
+            tabLabel: `tab ${describeIntent(this.tomuxIntent)}`,
+        }
+        let openedHere = false
         let acquired: { conn: TomuxConnection, opened: boolean }
         try {
             acquired = await this.tomux.acquire(
                 key,
-                () => TomuxConnection.open(new SshControlTransport(sshSession as any), this.sessionName),
+                () => {
+                    openedHere = true
+                    return TomuxConnection.open(new SshControlTransport(sshSession as any), this.sessionName, {
+                        sessionLabel: logContext.sessionLabel,
+                        warn: message => this.tomuxLog.warn(withConnectContext(message, logContext)),
+                    })
+                },
                 { tomuxProfile: this.tomuxProfile, sshProfile: this.profile },
             )
+            this.tomuxLog.info(connectionLogLine(acquired.opened
+                ? { kind: 'opened' }
+                : { kind: 'shared', connectionSession: acquired.conn.sessionLabel }, logContext))
         } catch (error) {
+            this.tomuxLog.warn(connectionLogLine({ kind: 'failed', openedHere, error }, logContext))
             if (!this.disposed) {
                 this.writeError(error instanceof TmuxVersionError ? error.message : `Could not start tmux: ${error}`)
             }

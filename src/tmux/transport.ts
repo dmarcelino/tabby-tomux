@@ -24,6 +24,17 @@ export interface ControlChannel {
     close (): Promise<void>
 }
 
+/**
+ * `tmux -V` closed its channel without printing anything. The message carries
+ * the diagnostics (stderr, EOF, channel lifetime, session state).
+ */
+export class TmuxVersionNoOutputError extends Error {
+    constructor (message: string, readonly sessionDestroyed: boolean) {
+        super(message)
+        this.name = 'TmuxVersionNoOutputError'
+    }
+}
+
 /** What a TomuxConnection needs from Tabby's SSH session. */
 export interface ControlTransport {
     /**
@@ -35,7 +46,8 @@ export interface ControlTransport {
     /**
      * Run `tmux -V` on a separate exec channel and return its output, e.g.
      * "tmux 3.5a". Rejects (or returns something that does not start with
-     * "tmux ") when tmux is not installed.
+     * "tmux ") when tmux is not installed. Rejects with
+     * TmuxVersionNoOutputError when the channel closes without any output.
      */
     readTmuxVersion (): Promise<string>
 
