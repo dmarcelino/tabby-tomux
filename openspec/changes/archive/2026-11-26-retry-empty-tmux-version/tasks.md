@@ -31,5 +31,6 @@
 ## 5. Verification
 
 - [x] 5.1 `npm run typecheck`, `npm test` and `npm run build` pass with no new build warnings
-- [ ] 5.2 Deploy to Tabby and confirm tabs still connect normally against a real tmux; check the log for the connection lines
+- [x] 5.2 Deploy to Tabby and confirm tabs still connect normally against a real tmux; check the log for the connection lines
 - [ ] 5.3 When the empty reply happens again in a running Tabby, check that the warning appears and the tab connects; record the result in `doc/TESTING.md`
+  - 2026-11-26: not seen in seven startups. The retry and the two-attempt error were checked with a simulated empty reply (see `doc/TESTING.md`); the task stays open until the real case is seen

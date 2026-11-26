@@ -247,3 +247,18 @@ Afterwards, 2026-11-26: the user tested the branch of PR #11 by hand in Tabby an
 Before the fix, a throwaway local tmux 3.8 server showed the cause: after a program set the title `fix login bug` with OSC 2 and then wrote the Kitty graphics query `ESC _ Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA ESC \`, `display-message -p '#{host}|#{pane_title}'` returned the query as the pane title.
 
 Afterwards, 2026-11-26: the user tested the branch of PR #12 by hand in Tabby and reported that it worked. The report did not name the Tabby version, the tmux version, or whether the bug was first reproduced on the unfixed build.
+
+## Empty `tmux -V` reply (change retry-empty-tmux-version, tasks 5.2 and 5.3), 2026-11-26
+
+Tabby 1.0.238 on macOS. The test host runs Debian 13 with tmux 3.5a and is reached through a local port forward. Tabby was started with `TOMUX_DEV=1` and driven through its DevTools port. It restored 20 tomux tabs: 17 for two sessions of the test host, and 3 whose profile no longer exists.
+
+| Check | Result |
+|---|---|
+| Normal startup, every tab shown once (task 5.2) | All 17 tabs bound to their windows. The log had one `tmux connection opened on SSH session #1 (tab ...)` per tmux session and `tmux connection shared, on SSH session #1 (tab ...)` for the other tabs. There were no warnings. |
+| Seven startups | Every tab connected on the first `tmux -V`. The empty reply did not happen on its own. |
+| One empty reply, simulated | A temporary wrapper on the host's `PATH` answered the first `tmux -V` with no output and passed everything else to tmux. The log had `warn: tmux -V gave no output, trying once more (no output; stderr: ""; EOF: yes; channel closed after 6 ms; SSH session destroyed: no) (SSH session #1, tab adopt @6)`, then `tmux connection opened` for that tab. The host saw one empty and one real `-V` call. All 17 tabs bound. |
+| Both attempts empty, simulated (four empty replies) | Each of the two tmux sessions logged the retry warning and then `tmux connection failed on SSH session #n (tab adopt @n): TmuxVersionError: ... (tmux -V failed: no output; ...; SSH session destroyed: no (first attempt: no output; ...))`. The tab showed the same text. The other tabs of those sessions opened the connection again on a new SSH session and bound. Reconnect on the two failed tabs bound them to their windows. |
+
+The wrapper and the `.bashrc` line that put it on `PATH` were removed afterwards.
+
+Not tested: an empty reply that occurs on its own (task 5.3 stays open), and a reply lost because the SSH session was destroyed during the check.
