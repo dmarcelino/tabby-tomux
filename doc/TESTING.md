@@ -238,4 +238,6 @@ In window `@2` of session `tomux-e2e`, a script drew `status ESC[4mlast ESC[0m` 
 | `last` on the bottom row (underlined by the program) | underlined | underlined |
 | Bash prompt in window `@7`, redrawn after the resize on restore (the script there had been stopped) | underlined (screenshot) | 0 of 12 cells underlined |
 
-Not checked: restoring a tab that runs Claude Code. The test host has no Claude Code, and the only Claude Code on the test machine runs in tmux sessions in daily use, which a tomux tab would resize.
+Not checked in this run: restoring a tab that runs Claude Code. The test host has no Claude Code, and the only Claude Code on the test machine runs in tmux sessions in daily use, which a tomux tab would resize.
+
+Afterwards, 2026-11-26: the user tested the branch of PR #11 by hand in Tabby and reported that it worked. The report did not name the Tabby version or the programs in the restored tabs.
