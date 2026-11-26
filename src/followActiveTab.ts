@@ -95,21 +95,3 @@ export interface TabContainer {
 export function followedTabWasReplaced (tab: unknown, container: TabContainer | null): boolean {
     return container !== null && !container.getAllTabs().includes(tab)
 }
-
-/**
- * Title, colour and icon of a followed tab. Tabby sets these from the default
- * profile after the provider returns, so the tab sets them again (D5).
- */
-export function followedTabLook (tomuxProfile: Pick<TomuxProfile, 'name' | 'color' | 'icon'>): {
-    title: string
-    color: string | null
-    icon: string | null
-} {
-    // A profile without colour or icon reads as '' through its config proxy;
-    // Tabby treats any falsy value as none, so do the same.
-    return {
-        title: tomuxProfile.name,
-        color: tomuxProfile.color || null,
-        icon: tomuxProfile.icon || null,
-    }
-}

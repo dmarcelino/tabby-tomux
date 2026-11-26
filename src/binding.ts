@@ -43,6 +43,11 @@ export function connectIntent (current: BindIntent, boundWindowId: string | null
     return boundWindowId ? { kind: 'adopt', windowId: boundWindowId } : current
 }
 
+/** The intent for the log: "new", "adopt @3", "reopen @4". */
+export function describeIntent (intent: BindIntent): string {
+    return intent.kind === 'new' ? 'new' : `${intent.kind} ${intent.windowId}`
+}
+
 export function decideBinding (ctx: BindContext): BindDecision {
     const { intent, windows, isOwned } = ctx
     const free = (id: string) => windows.find(w => w.id === id && !isOwned(w.id))

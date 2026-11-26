@@ -248,6 +248,21 @@ Before the fix, a throwaway local tmux 3.8 server showed the cause: after a prog
 
 Afterwards, 2026-11-26: the user tested the branch of PR #12 by hand in Tabby and reported that it worked. The report did not name the Tabby version, the tmux version, or whether the bug was first reproduced on the unfixed build.
 
+## Empty `tmux -V` reply (change retry-empty-tmux-version, tasks 5.2 and 5.3), 2026-11-26
+
+Tabby 1.0.238 on macOS. The test host runs Debian 13 with tmux 3.5a and is reached through a local port forward. Tabby was started with `TOMUX_DEV=1` and driven through its DevTools port. It restored 20 tomux tabs: 17 for two sessions of the test host, and 3 whose profile no longer exists.
+
+| Check | Result |
+|---|---|
+| Normal startup, every tab shown once (task 5.2) | All 17 tabs bound to their windows. The log had one `tmux connection opened on SSH session #1 (tab ...)` per tmux session and `tmux connection shared, on SSH session #1 (tab ...)` for the other tabs. There were no warnings. |
+| Seven startups | Every tab connected on the first `tmux -V`. The empty reply did not happen on its own. |
+| One empty reply, simulated | A temporary wrapper on the host's `PATH` answered the first `tmux -V` with no output and passed everything else to tmux. The log had `warn: tmux -V gave no output, trying once more (no output; stderr: ""; EOF: yes; channel closed after 6 ms; SSH session destroyed: no) (SSH session #1, tab adopt @6)`, then `tmux connection opened` for that tab. The host saw one empty and one real `-V` call. All 17 tabs bound. |
+| Both attempts empty, simulated (four empty replies) | Each of the two tmux sessions logged the retry warning and then `tmux connection failed on SSH session #n (tab adopt @n): TmuxVersionError: ... (tmux -V failed: no output; ...; SSH session destroyed: no (first attempt: no output; ...))`. The tab showed the same text. The other tabs of those sessions opened the connection again on a new SSH session and bound. Reconnect on the two failed tabs bound them to their windows. |
+
+The wrapper and the `.bashrc` line that put it on `PATH` were removed afterwards.
+
+Not tested: an empty reply that occurs on its own (task 5.3 stays open), and a reply lost because the SSH session was destroyed during the check.
+
 ## Tab order kept in tmux (change restore-tab-order, tasks 5.1–5.3), 2026-11-26
 
 2026-11-26: the user tested the branch of PR #14 by hand in Tabby and reported that it worked. The report did not name the Tabby or tmux version, or which of the checks in tasks 5.1 and 5.2 were run (the `@tomux-order` values after a drag and after a hotkey move, a restart with tab restore off, a window created while Tabby was closed, and a restart with restore on).
@@ -276,3 +291,30 @@ Setup: Tabby 1.0.238 on macOS, started with `TOMUX_DEV=1` and driven through its
 Found and fixed during this run: switching back to the script's pane drew its screen from the row of the shell's saved cursor instead of the top, because `ESC[?1049h` clears the alternate screen without moving the cursor. Claude Code's restore had looked right only because the shell's cursor was on the last row and Claude Code's screen fills every row. The redraw now moves the cursor home after the switch (unit test in `src/paneRedraw.spec.ts`), and the pane-switch checks above were run again on the fixed build.
 
 Not checked: tmux older than 3.8 (the formats and `capture-pane -a` on tmux 2.1), the Debian test host, and mouse input reaching the program (only the tab's mouse mode was read, no clicks were sent).
+
+## Profile colour on adopted tabs (change adopted-tab-profile-look, task 3.1), 2026-11-26
+
+Setup: Tabby 1.0.238 on macOS, test host Debian 13 with tmux 3.5a reached through a local port forward. Tabby was started with `TOMUX_DEV=1` and driven through its DevTools port, with the plugin linked to the change's branch. `log.txt` showed `tomux plugin loaded`. Two tomux profiles were added for this run and removed afterwards: `tomux-color` (colour `#cc0000`, icon `fas fa-server`) and `tomux-nocolor` (neither), each on its own new session with two windows. Profiles were opened with `ProfilesService.openNewTabForProfile`, as the profile selector does. Every `AppService.openNewTab` call was recorded. The title a tab was opened with, below, is the `title` input of that call, not read from the tab header. Each check also read the tab header's colour bar, and the host's `tmux list-windows` and `tmux list-clients`.
+
+| Check | Result |
+|---|---|
+| Open `tomux-color` on its session with windows `@20` and `@21`, no tab connected | The tab bound to `@20` and the extra tab for `@21` are both `#cc0000`, with the header bar drawn red, and both have the icon. The extra tab was opened with the title `tomux-color` and showed `tmux:1` once bound to its window. 2 windows, 1 client. |
+| `tmux new-window` in that session from the host | One new tab for `@24`, red, with the icon, opened with the title `tomux-color`. Tabby selected it, and it then showed `tmux:2`. |
+| The icon in the tab header | Not drawn with this Tabby's "show profile icon on tab" setting off. With the setting turned on in memory, all three headers drew the server icon. |
+| Open `tomux-nocolor` on its session with windows `@22` and `@23` | Neither tab has a colour, an icon or a header bar. 2 windows, 1 client. |
+| Set the `@21` tab to `#00aa00` as the tab menu's Color item does (`tab.color = value` on the tab, inside Angular's zone), quit Tabby with the Quit command and start it again | `@21` came back green, `@20` and `@24` red with the icon, and the `tomux-nocolor` tabs without a colour. All five windows were still on the host after the quit. |
+
+The tab menu itself was not clicked: on macOS it is a native menu, which DevTools can't reach, so its action was run directly.
+
+### Second run: unfixed build, several extra tabs, older saved tabs, 2026-11-26
+
+Same setup and profiles. `tomux-color`'s session had four windows this time. The unfixed build was `main` at 882e63a, built from `git archive` into a temporary folder and linked in place of the branch.
+
+| Check | Result |
+|---|---|
+| Unfixed build: open `tomux-color` on its session with windows `@25` to `@28`, no tab connected | The tab bound to `@25` is `#cc0000` with the icon. The three extra tabs for `@26`, `@27` and `@28` were opened with no title, colour or icon, and their headers have no colour bar. This is the reported bug. |
+| Quit, link the fixed build, start Tabby again (tab restore on) | As saved: the `@25` tab red with the icon, the three extra tabs without a colour (the README's note on tabs an older tomux opened). Restored tabs that were not shown were not bound to their windows. |
+| Fixed build, after closing those tabs: open `tomux-color` on a new session with windows `@31` to `@34` | All four tabs `#cc0000`, with the icon and a red header bar. The three extra tabs were opened with the title `tomux-color`. Only `@34` ended up selected, yet all three extra tabs were bound without a click and showed `tmux:1` to `tmux:3`: tabs tomux opens itself connect at once. Only restored tabs wait until they are first shown. 4 windows, 1 client. |
+| `tmux new-window` in that session | One new tab for `@35`, red, with the icon, opened with the title `tomux-color`, then `tmux:4`. |
+| Open `tomux-nocolor` on its session with windows `@29` and `@30` | Neither tab has a colour, an icon or a header bar. 2 windows, 1 client. |
+| Set the `@32` tab to `#00aa00` as in the first run, quit with the Quit command and start again | `@32` came back green, `@31` and `@33` to `@35` red with the icon, and the `tomux-nocolor` tabs without a colour. All seven windows were still on the host after the quit. |

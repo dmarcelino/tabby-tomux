@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Subject } from 'rxjs'
-import { SshControlTransport, SshSessionLike } from './sshTransport'
+import { SshControlTransport, SshSessionLike, sshSessionNumber } from './sshTransport'
+import { TmuxVersionNoOutputError } from './tmux/transport'
 
 /** A russh-like channel whose requests can be made to fail. */
 class FakeRusshChannel {
@@ -60,7 +61,7 @@ class FakeRusshChannel {
     }
 }
 
-function fakeSession (channel: FakeRusshChannel): SshSessionLike & { refs: number } {
+function fakeSession (channel: FakeRusshChannel): SshSessionLike & { refs: number, willDestroy$: Subject<void> } {
     const session = {
         refs: 0,
         willDestroy$: new Subject<void>(),
@@ -137,6 +138,39 @@ describe('SshControlTransport.readTmuxVersion', () => {
         expect(unhandled).toEqual([])
     })
 
+    it('gives up in time when the channel never opens, and closes a channel that opens later', async () => {
+        vi.useFakeTimers()
+        const ch = new FakeRusshChannel()
+        const session = fakeSession(ch)
+        let openLate: (() => void) | undefined
+        session.ssh = {
+            openSessionChannel: () => new Promise(resolve => { openLate = () => resolve({}) }),
+            activateChannel: async () => ch,
+        }
+        const version = new SshControlTransport(session).readTmuxVersion().catch((e: Error) => e)
+        await vi.advanceTimersByTimeAsync(10_000)
+        expect(((await version) as Error).message).toBe('tmux -V did not answer in time')
+        expect(vi.getTimerCount()).toBe(0)
+        openLate!()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(ch.execs).toEqual([])
+        expect(ch.closeCalls).toBe(1)
+        await drain()
+        expect(unhandled).toEqual([])
+    })
+
+    it('gives up in time when the exec request never answers', async () => {
+        vi.useFakeTimers()
+        const ch = new FakeRusshChannel()
+        ch.requestExec = () => new Promise(() => undefined)
+        const version = new SshControlTransport(fakeSession(ch)).readTmuxVersion().catch((e: Error) => e)
+        await vi.advanceTimersByTimeAsync(10_000)
+        expect(((await version) as Error).message).toBe('tmux -V did not answer in time')
+        expect(ch.closeCalls).toBe(1)
+        await drain()
+        expect(unhandled).toEqual([])
+    })
+
     it('when tmux -V prints nothing: rejects naming the stderr text, whether EOF came and how long the channel lived', async () => {
         vi.useFakeTimers()
         const ch = new FakeRusshChannel()
@@ -148,7 +182,7 @@ describe('SshControlTransport.readTmuxVersion', () => {
         const version = transport.readTmuxVersion().catch((e: Error) => e)
         await vi.advanceTimersByTimeAsync(42)
         expect(((await version) as Error).message).toBe(
-            'no output; stderr: "zsh:1: no such file or directory: /opt/x"; EOF: no; channel closed after 42 ms')
+            'no output; stderr: "zsh:1: no such file or directory: /opt/x"; EOF: no; channel closed after 42 ms; SSH session destroyed: no')
         expect(ch.closeCalls).toBe(1)
         await drain()
         expect(unhandled).toEqual([])
@@ -161,7 +195,58 @@ describe('SshControlTransport.readTmuxVersion', () => {
         const transport = new SshControlTransport(fakeSession(ch))
         const version = transport.readTmuxVersion().catch((e: Error) => e)
         await vi.advanceTimersByTimeAsync(0)
-        expect(((await version) as Error).message).toBe('no output; stderr: ""; EOF: yes; channel closed after 0 ms')
+        const error = await version
+        expect(error).toBeInstanceOf(TmuxVersionNoOutputError)
+        expect((error as TmuxVersionNoOutputError).sessionDestroyed).toBe(false)
+        expect((error as Error).message).toBe('no output; stderr: ""; EOF: yes; channel closed after 0 ms; SSH session destroyed: no')
+    })
+
+    it('when the SSH session is destroyed before the channel closes: says so', async () => {
+        vi.useFakeTimers()
+        const ch = new FakeRusshChannel()
+        ch.output = null
+        const session = fakeSession(ch)
+        const transport = new SshControlTransport(session)
+        const version = transport.readTmuxVersion().catch((e: Error) => e)
+        await vi.advanceTimersByTimeAsync(0)
+        session.willDestroy$.next()
+        ch.closed$.next()
+        const error = await version
+        expect(error).toBeInstanceOf(TmuxVersionNoOutputError)
+        expect((error as TmuxVersionNoOutputError).sessionDestroyed).toBe(true)
+        expect((error as Error).message).toBe('no output; stderr: ""; EOF: no; channel closed after 0 ms; SSH session destroyed: yes')
+    })
+
+    it('when the SSH session is destroyed while the channel is opening: says so', async () => {
+        vi.useFakeTimers()
+        const ch = new FakeRusshChannel()
+        ch.output = ''
+        ch.sendsEof = false
+        const session = fakeSession(ch)
+        session.ssh = {
+            openSessionChannel: async () => ({}),
+            activateChannel: async () => {
+                // SSHSession.destroy(): next(), then complete().
+                session.willDestroy$.next()
+                session.willDestroy$.complete()
+                return ch
+            },
+        }
+        const version = new SshControlTransport(session).readTmuxVersion().catch((e: Error) => e)
+        await vi.advanceTimersByTimeAsync(0)
+        expect(((await version) as Error).message).toMatch(/; SSH session destroyed: yes$/u)
+    })
+
+    it('when the SSH session was destroyed before the check started: says so', async () => {
+        vi.useFakeTimers()
+        const ch = new FakeRusshChannel()
+        ch.output = ''
+        const session = fakeSession(ch)
+        session.willDestroy$.next()
+        session.willDestroy$.complete()
+        const version = new SshControlTransport(session).readTmuxVersion().catch((e: Error) => e)
+        await vi.advanceTimersByTimeAsync(0)
+        expect(((await version) as Error).message).toMatch(/; SSH session destroyed: yes$/u)
     })
 
     it('rejects when the SSH connection is not logged in', async () => {
@@ -219,5 +304,15 @@ describe('SshControlTransport hold/release', () => {
         transport.hold()
         transport.release()
         expect(session.refs).toBe(1)
+    })
+})
+
+describe('sshSessionNumber', () => {
+    it('gives each SSH session object its own number and the same one every time', () => {
+        const a = {}
+        const b = {}
+        const first = sshSessionNumber(a)
+        expect(sshSessionNumber(b)).toBe(first + 1)
+        expect(sshSessionNumber(a)).toBe(first)
     })
 })
