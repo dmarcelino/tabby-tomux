@@ -356,3 +356,9 @@ Bug found, already in the code before this branch (`getRecoveryToken` in `src/co
 Setup mistake, not a tomux problem: a first try at the different-size restore set the size with `tmux resize-window`, which sets the window's `window-size` to `manual`, so tmux ignored the client size tomux asked for.
 
 Not checked: tmux older than 3.8, the Debian test host, mouse clicks reaching a program, the empty `tmux -V` retry (the version was read on the first try).
+
+## Restored tab keeps its window until shown (change keep-unshown-tab-window, task 2.2), 2026-11-26
+
+The user ran the change's scenarios in a running Tabby against a real tmux and reported them successful: restart twice without showing a restored tab, kill that tab's window while Tabby is closed, and close an unshown restored tab then reopen it. The details of that run (versions, host, window ids) were not recorded.
+
+Tabs saved by a build without this change have no window id in their token. They come back as new-window tabs once. To avoid that, show or close each restored tab once before quitting Tabby with the new build.
