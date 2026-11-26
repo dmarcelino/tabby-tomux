@@ -4,8 +4,8 @@ import { activeTomuxTab, FollowableTab, followedTabInputs, followedTabWasReplace
 import type { TomuxTabInputs } from './tomux.service'
 import type { TomuxProfile } from './profile'
 
-function tomuxProfile (id: string, sessionName: string, extra: Partial<TomuxProfile> = {}): TomuxProfile {
-    return { id, type: 'tomux', name: id, options: { sshProfileId: `ssh-${id}`, sessionName }, ...extra } as TomuxProfile
+function tomuxProfile (id: string, sessionName: string): TomuxProfile {
+    return { id, type: 'tomux', name: id, options: { sshProfileId: `ssh-${id}`, sessionName } } as TomuxProfile
 }
 
 class FakeTomuxTab implements FollowableTab {

@@ -3,7 +3,7 @@
 ## ADDED Requirements
 
 ### Requirement: Tabs tomux opens for a session's windows look like their profile
-When tomux opens a tab on its own for a window of a session, such as the session's other windows when the profile is opened or a window created later from inside tmux or by another client, the tab SHALL show the colour and icon of its tomux profile and, until tmux reports the window's name, the profile's name, as a tab opened from that profile would. Tabs Tabby restores keep the colour and icon saved with them.
+When tomux opens a tab on its own for a window of a session, such as the session's other windows when the profile is opened or a window created later from inside tmux or by another client, the tab SHALL show the colour and icon of its tomux profile and, until the tab is first shown and tmux reports the window's name, the profile's name, as a tab opened from that profile would. Tabs Tabby restores keep the colour and icon saved with them.
 
 #### Scenario: Opening the profile on a session with several windows
 - **GIVEN** the tomux profile `work-server` has a red tab colour and an icon, and its session has windows `@1` and `@2` with no tomux tab connected to it
