@@ -186,3 +186,18 @@ Found while testing, not part of this change (issue #1): a restored tab that is 
 ## Home and End in application cursor mode (change fix-app-cursor-home-end, task 3.2), 2026-11-25
 
 The user tested the fix by hand in a running Tabby and reported that the Home and End keys work. The report did not name the Tabby version, the host or the programs used, and did not mention the arrow keys, so the arrow scenario in the change's spec is covered by unit tests only.
+
+## Text style after a restored screen (change reset-style-after-snapshot, task 3.2), 2026-11-26
+
+Setup: Tabby 1.0.238 on macOS, test host Debian 13 with tmux 3.5a reached through a local port forward. Tabby was started with `TOMUX_DEV=1` and driven through its DevTools port. The restored tab's xterm.js buffer was read cell by cell. The first run used the unfixed build (`main` at 00c599d), the second the change's branch. `log.txt` showed `tomux plugin loaded` both times.
+
+In window `@2` of session `tomux-e2e`, a script drew `status ESC[4mlast ESC[0m` on the bottom row, with nothing written after it, so tmux's capture of the pane ends with underline on. It then redrew row 3 every second as `ESC[33m redrawn NNNNN ESC[39m`, which sets only the colour. With the tab open, Tabby was quit and started again, and the restored tab was shown.
+
+| Check | Unfixed build | Fixed build |
+|---|---|---|
+| Cells of the live-redrawn `redrawn NNNNN` line that are underlined | 12 of 12 (counter at 00030 and 00052) | 0 of 12 (counter at 00082 and 00090: it was still redrawing) |
+| Colour of that line | yellow | yellow |
+| `last` on the bottom row (underlined by the program) | underlined | underlined |
+| Bash prompt in window `@7`, redrawn after the resize on restore (the script there had been stopped) | underlined (screenshot) | 0 of 12 cells underlined |
+
+Not checked: restoring a tab that runs Claude Code. The test host has no Claude Code, and the only Claude Code on the test machine runs in tmux sessions in daily use, which a tomux tab would resize.

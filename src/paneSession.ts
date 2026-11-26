@@ -21,8 +21,14 @@ const MAX_BATCH_LINE = 8192
  * paste or never come on a stalled connection.
  */
 export const WORKING_DIRECTORY_TIMEOUT_MS = 1500
-/** Clear screen and scrollback, cursor home: the pane is drawn again from scratch. */
-const CLEAR_SCREEN = '\x1b[2J\x1b[3J\x1b[H'
+/** SGR 0: default text style (no underline, bold, colours, ...). */
+const RESET_STYLE = '\x1b[0m'
+/**
+ * Clear screen and scrollback, cursor home: the pane is drawn again from
+ * scratch. The style is reset first, because earlier output may have left
+ * one on and ESC[2J paints with the current background.
+ */
+const CLEAR_SCREEN = RESET_STYLE + '\x1b[2J\x1b[3J\x1b[H'
 
 export class TomuxPaneSession extends BaseSession {
     private normalizer = new PaneOutputNormalizer()
@@ -175,7 +181,15 @@ export class TomuxPaneSession extends BaseSession {
         }
     }
 
-    /** History + screen + cursor, captured atomically together (one tmux line). */
+    /**
+     * History + screen + cursor, captured atomically together (one tmux line).
+     * The text style is reset on both sides of the captured text.
+     * capture-pane -e assumes it starts from the default style, so a style
+     * left on by earlier output would colour its plain cells. It also never
+     * ends with a reset, so a capture whose last cell is styled would leave
+     * that style on for the program's next redraw. tmux can't report the
+     * program's current style; between screen updates it is the default.
+     */
     private async captureSnapshot (paneId: string): Promise<string | null> {
         try {
             const snap = await this.connection.client.captureWithCursor(paneId, {
@@ -183,7 +197,7 @@ export class TomuxPaneSession extends BaseSession {
             })
             this.logger.info(`Captured pane ${paneId}: pane ${snap.paneWidth}x${snap.paneHeight}, ` +
                 `cursor ${snap.cursorX},${snap.cursorY}, ${snap.text.split('\n').length} lines`)
-            return snap.text.replace(/\n/g, '\r\n') + `\x1b[${snap.cursorY + 1};${snap.cursorX + 1}H`
+            return RESET_STYLE + snap.text.replace(/\n/g, '\r\n') + RESET_STYLE + `\x1b[${snap.cursorY + 1};${snap.cursorX + 1}H`
         } catch (error) {
             this.logger.warn('Could not capture the pane:', error)
             return null
