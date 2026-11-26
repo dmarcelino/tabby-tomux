@@ -72,6 +72,22 @@ describe('programTitleFromPane', () => {
     it('only matches the whole host name', () => {
         expect(programTitleFromPane('testhost: ~/src', 'testhost')).toBe('testhost: ~/src')
     })
+
+    it('reads a Kitty graphics command as no title (tmux stores APC as the title)', () => {
+        expect(programTitleFromPane('Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA', 'testhost')).toBeNull()
+        expect(programTitleFromPane('Ga=d,d=A', 'testhost')).toBeNull()
+        expect(programTitleFromPane('Gm=0;abc', 'testhost')).toBeNull()
+        expect(programTitleFromPane('Gf=100,a=T,m=1,z=-1;iVBOR', 'testhost')).toBeNull()
+        expect(programTitleFromPane('Ga=q,i=1', 'testhost')).toBeNull()
+        expect(programTitleFromPane(' Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA ', 'testhost')).toBeNull()
+    })
+
+    it('keeps titles that only look close to a graphics command', () => {
+        expect(programTitleFromPane('Go away', 'testhost')).toBe('Go away')
+        expect(programTitleFromPane('GPU=1', 'testhost')).toBe('GPU=1')
+        expect(programTitleFromPane('Gx=1 build', 'testhost')).toBe('Gx=1 build')
+        expect(programTitleFromPane('Gx=1, y=2', 'testhost')).toBe('Gx=1, y=2')
+    })
 })
 
 /** A tab stand-in: records what the controller shows and renames; pane titles answer on demand. */
@@ -179,6 +195,15 @@ describe('TabTitleController: seeding from tmux', () => {
     it('shows the placeholder when the pane has no program title', async () => {
         const { tab } = await attached()
         expect(tab.shown).toEqual(['tmux:2'])
+    })
+
+    it('shows the placeholder, not a graphics query tmux stored as the pane title', async () => {
+        const tab = new FakeTab()
+        // As the tab component reads it: #{pane_title} through programTitleFromPane.
+        tab.paneTitles.set('%3', programTitleFromPane('Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA', 'testhost'))
+        const titles = new TabTitleController(tab)
+        await titles.attach({ index: 3, paneId: '%3', name: 'tmux:3', automaticRename: false })
+        expect(tab.shown).toEqual(['tmux:3'])
     })
 
     it('replaces an old program title on reconnect with what tmux holds now', async () => {
