@@ -247,3 +247,9 @@ Afterwards, 2026-11-26: the user tested the branch of PR #11 by hand in Tabby an
 Before the fix, a throwaway local tmux 3.8 server showed the cause: after a program set the title `fix login bug` with OSC 2 and then wrote the Kitty graphics query `ESC _ Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA ESC \`, `display-message -p '#{host}|#{pane_title}'` returned the query as the pane title.
 
 Afterwards, 2026-11-26: the user tested the branch of PR #12 by hand in Tabby and reported that it worked. The report did not name the Tabby version, the tmux version, or whether the bug was first reproduced on the unfixed build.
+
+## Tab order kept in tmux (change restore-tab-order, tasks 5.1–5.3), 2026-11-26
+
+2026-11-26: the user tested the branch of PR #14 by hand in Tabby and reported that it worked. The report did not name the Tabby or tmux version, or which of the checks in tasks 5.1 and 5.2 were run (the `@tomux-order` values after a drag and after a hotkey move, a restart with tab restore off, a window created while Tabby was closed, and a restart with restore on).
+
+Not checked: task 5.3, whether `set-option -w … @tomux-order` and `#{@tomux-order}` work on a tmux older than 3.6 (the only version checked, locally, while writing the change). So the README states no minimum tmux version for this feature.
