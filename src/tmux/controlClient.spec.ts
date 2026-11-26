@@ -209,17 +209,51 @@ describe('TmuxControlClient operations', () => {
         await expect(p).resolves.toBe('x')
     })
 
-    it('captureWithCursor sends capture-pane and the cursor and pane size query as one line', async () => {
+    const STATE = '#{cursor_x}|#{cursor_y}|#{pane_width}|#{pane_height}|#{alternate_on}|#{alternate_saved_x}|#{alternate_saved_y}|#{history_size}|#{cursor_flag}|#{mouse_standard_flag}|#{mouse_button_flag}|#{mouse_all_flag}|#{mouse_sgr_flag}|#{mouse_utf8_flag}'
+    const FIRST_LINE = `capture-pane -p -e -J -S - -t %5 ; display-message -p -t %5 "${STATE}"\r`
+    const SECOND_LINE = 'capture-pane -p -e -J -a -t %5 ; capture-pane -p -e -J -S - -E -1 -t %5 ; ' +
+        `capture-pane -p -e -J -t %5 ; display-message -p -t %5 "${STATE}"\r`
+    const DEFAULT_MODES = { cursorVisible: true, mouseMode: null, mouseEncoding: null }
+
+    it('captureWithCursor sends capture-pane and the cursor, size and mode query as one line', async () => {
         const t = new FakeTmux().start()
         const p = t.client.captureWithCursor('%5')
-        expect(t.writes).toEqual([
-            'capture-pane -p -e -J -S - -t %5 ; display-message -p -t %5 "#{cursor_x} #{cursor_y} #{pane_width} #{pane_height}"\r',
-        ])
+        expect(t.writes).toEqual([FIRST_LINE])
         t.respond(['\x1b[1mline one\x1b[0m', 'line two', ''])
-        t.respond(['7 22 182 48'])
+        t.respond(['7|22|182|48|0|4294967295|4294967295|100|1|0|0|0|0|0'])
         await expect(p).resolves.toEqual({
             text: '\x1b[1mline one\x1b[0m\nline two\n', cursorX: 7, cursorY: 22, paneWidth: 182, paneHeight: 48,
+            modes: DEFAULT_MODES,
         })
+        // A pane that is not in the alternate screen needs one line only.
+        expect(t.writes).toHaveLength(1)
+    })
+
+    it('captureWithCursor reads the hidden cursor and the mouse mode and encoding', async () => {
+        const t = new FakeTmux().start()
+        const p = t.client.captureWithCursor('%5')
+        t.respond(['screen'])
+        t.respond(['0|3|80|24|0|0|0|0|0|0|1|0|1|0'])
+        await expect(p).resolves.toMatchObject({ modes: { cursorVisible: false, mouseMode: 1002, mouseEncoding: 1006 } })
+    })
+
+    it('captureWithCursor prefers the widest mouse mode tmux reports, and the UTF-8 encoding', async () => {
+        const t = new FakeTmux().start()
+        const p = t.client.captureWithCursor('%5')
+        t.respond(['screen'])
+        t.respond(['0|3|80|24|0|0|0|0|1|1|0|1|0|1'])
+        await expect(p).resolves.toMatchObject({ modes: { cursorVisible: true, mouseMode: 1003, mouseEncoding: 1005 } })
+    })
+
+    it('captureWithCursor reads empty fields (formats an old tmux lacks) as a normal pane with default modes', async () => {
+        const t = new FakeTmux().start()
+        const p = t.client.captureWithCursor('%5')
+        t.respond(['screen'])
+        t.respond(['3|5|80|24||||||||||'])
+        await expect(p).resolves.toEqual({
+            text: 'screen', cursorX: 3, cursorY: 5, paneWidth: 80, paneHeight: 24, modes: DEFAULT_MODES,
+        })
+        expect(t.writes).toHaveLength(1)
     })
 
     it('captureWithCursor calls onCaptureStart at the capture\'s %begin, before later output', async () => {
@@ -229,18 +263,18 @@ describe('TmuxControlClient operations', () => {
         const p = t.client.captureWithCursor('%5', { onCaptureStart: () => { events.push('capture start') } })
         t.gateway.ingest('%output %5 old\r\n')
         t.respond(['screen'])
-        t.respond(['0 3 80 24'])
+        t.respond(['0|3|80|24|0|0|0|0|1|0|0|0|0|0'])
         t.gateway.ingest('%output %5 new\r\n')
         expect(events).toEqual(['output old', 'capture start', 'output new'])
-        await expect(p).resolves.toEqual({ text: 'screen', cursorX: 0, cursorY: 3, paneWidth: 80, paneHeight: 24 })
+        await expect(p).resolves.toMatchObject({ text: 'screen', cursorX: 0, cursorY: 3, paneWidth: 80, paneHeight: 24 })
     })
 
-    it('captureWithCursor reads an unparseable cursor and pane size as 0', async () => {
+    it('captureWithCursor reads an unparseable reply as cursor 0,0, size 0 and default modes', async () => {
         const t = new FakeTmux().start()
         const p = t.client.captureWithCursor('%5')
         t.respond([])
         t.respond(['?'])
-        await expect(p).resolves.toEqual({ text: '', cursorX: 0, cursorY: 0, paneWidth: 0, paneHeight: 0 })
+        await expect(p).resolves.toEqual({ text: '', cursorX: 0, cursorY: 0, paneWidth: 0, paneHeight: 0, modes: DEFAULT_MODES })
     })
 
     it('captureWithCursor rejects when the capture fails (the cursor query is skipped)', async () => {
@@ -248,6 +282,93 @@ describe('TmuxControlClient operations', () => {
         const p = t.client.captureWithCursor('%5')
         t.fail("can't find pane: %5")
         await expect(p).rejects.toThrow("can't find pane: %5")
+    })
+
+    /** Let the client send its next line after a reply. */
+    const tick = async (): Promise<void> => { for (let i = 0; i < 5; i++) { await Promise.resolve() } }
+
+    it('captureWithCursor captures both screens in a second line when the pane is in the alternate screen', async () => {
+        const t = new FakeTmux().start()
+        let starts = 0
+        const p = t.client.captureWithCursor('%5', { onCaptureStart: () => { starts++ } })
+        t.respond(['history', 'ALT old'])
+        t.respond(['4|1|80|24|1|2|3|1|0|0|1|0|1|0'])
+        await tick()
+        expect(t.writes).toEqual([FIRST_LINE, SECOND_LINE])
+        t.respond(['$ shell', ''])
+        t.respond(['history'])
+        t.respond(['ALT new', ''])
+        t.respond(['5|0|80|24|1|2|3|1|0|0|1|0|1|0'])
+        await expect(p).resolves.toEqual({
+            text: 'history\n$ shell\n', cursorX: 5, cursorY: 0, paneWidth: 80, paneHeight: 24,
+            alternate: { text: 'ALT new\n', savedCursor: { x: 2, y: 3 } },
+            modes: { cursorVisible: false, mouseMode: 1002, mouseEncoding: 1006 },
+        })
+        // Once per line, at the %begin of its first capture.
+        expect(starts).toBe(2)
+    })
+
+    it('captureWithCursor ignores the history capture when the pane has no history', async () => {
+        const t = new FakeTmux().start()
+        const p = t.client.captureWithCursor('%5')
+        t.respond(['ALT'])
+        t.respond(['0|0|80|24|1|0|1|0|1|0|0|0|0|0'])
+        await tick()
+        t.respond(['$ shell'])
+        // With no history, tmux answers `-S - -E -1` with the first screen line.
+        t.respond(['first screen line'])
+        t.respond(['ALT'])
+        t.respond(['0|0|80|24|1|0|1|0|1|0|0|0|0|0'])
+        await expect(p).resolves.toMatchObject({ text: '$ shell', alternate: { text: 'ALT', savedCursor: { x: 0, y: 1 } } })
+    })
+
+    it('captureWithCursor reads a saved cursor outside the pane (none saved) as none', async () => {
+        const t = new FakeTmux().start()
+        const p = t.client.captureWithCursor('%5')
+        t.respond(['ALT'])
+        t.respond(['0|0|80|24|1|4294967295|4294967295|0|1|0|0|0|0|0'])
+        await tick()
+        t.respond(['$ shell'])
+        t.respond([])
+        t.respond(['ALT'])
+        t.respond(['0|0|80|24|1|4294967295|4294967295|0|1|0|0|0|0|0'])
+        await expect(p).resolves.toMatchObject({ alternate: { text: 'ALT', savedCursor: null } })
+    })
+
+    it('captureWithCursor starts again when the program left the alternate screen before the second line', async () => {
+        const t = new FakeTmux().start()
+        const p = t.client.captureWithCursor('%5')
+        t.respond(['ALT'])
+        t.respond(['0|0|80|24|1|0|0|0|1|0|0|0|0|0'])
+        await tick()
+        t.fail('no alternate screen')
+        await tick()
+        expect(t.writes).toEqual([FIRST_LINE, SECOND_LINE, FIRST_LINE])
+        t.respond(['$ shell'])
+        t.respond(['2|0|80|24|0|4294967295|4294967295|0|1|0|0|0|0|0'])
+        await expect(p).resolves.toEqual({
+            text: '$ shell', cursorX: 2, cursorY: 0, paneWidth: 80, paneHeight: 24, modes: DEFAULT_MODES,
+        })
+    })
+
+    it('captureWithCursor draws a fresh first line as a normal pane after three failed second lines', async () => {
+        const t = new FakeTmux().start()
+        const p = t.client.captureWithCursor('%5')
+        for (let i = 0; i < 3; i++) {
+            t.respond(['ALT'])
+            t.respond(['0|0|80|24|1|0|0|0|1|0|0|0|0|0'])
+            await tick()
+            t.fail('no alternate screen')
+            await tick()
+        }
+        expect(t.writes).toEqual([FIRST_LINE, SECOND_LINE, FIRST_LINE, SECOND_LINE, FIRST_LINE, SECOND_LINE, FIRST_LINE])
+        t.respond(['ALT again'])
+        t.respond(['1|0|80|24|1|0|0|0|0|0|0|0|0|0'])
+        await expect(p).resolves.toEqual({
+            text: 'ALT again', cursorX: 1, cursorY: 0, paneWidth: 80, paneHeight: 24,
+            modes: { cursorVisible: false, mouseMode: null, mouseEncoding: null },
+        })
+        expect(t.writes).toHaveLength(7)
     })
 
     it('sendCommand and sendCommandList pass onBegin through to the gateway', async () => {
