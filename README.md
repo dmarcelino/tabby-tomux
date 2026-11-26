@@ -14,7 +14,12 @@ Status: early development, tested against Tabby 1.0.238 and tmux 3.5a.
 
 1. In Tabby, open Settings → Profiles & connections → New profile, and choose the template **tomux: tmux session over SSH**.
 2. Pick the SSH profile for the host and a tmux session name (default `main`). Session names cannot contain `.` or `:`.
-3. Optional: choose this tomux profile under Settings → Profiles & connections → **Default profile for new tabs**. Then `+` and the new-tab hotkey open a new tmux window on that host. This is one global setting, so `+` always goes to that host, whichever tab is active.
+3. Optional: choose this tomux profile under Settings → Profiles & connections → **Default profile for new tabs**. Then `+` and the new-tab hotkey open a new tmux window:
+   - When the active tab (or the focused pane of a split) is a tomux tab, the window goes to **that tab's** host and session, even if it belongs to another tomux profile or is reconnecting. The new tab gets that profile's colour and icon.
+   - Otherwise, it goes to this profile's host and session.
+   - Choosing this profile in the profile selector, with a profile hotkey or from the command line does the same, because Tabby opens it the same way as `+`. Choosing any other profile opens that profile.
+   - **New terminal** in a tab's menu also follows the *active* tab, even when you opened the menu on another tab.
+   - In a Tabby window with no tab for this profile's session, pressing `+` while a non-tomux tab is active connects that window to the session for the first time, so every window of the session opens as a tab there.
 
 ## How it works
 

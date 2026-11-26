@@ -11,6 +11,7 @@ import { merge, Subscription } from 'rxjs'
 import { Logger, LogService, NotificationsService, RecoveryToken } from 'tabby-core'
 import { BaseTerminalTabComponent, ConnectableTerminalTabComponent } from 'tabby-terminal'
 import { BindIntent, connectIntent, decideBinding } from '../binding'
+import { followedTabLook, followedTabWasReplaced } from '../followActiveTab'
 import { TomuxPaneSession } from '../paneSession'
 import type { TomuxProfile } from '../profile'
 import { makeRecoveryToken } from '../recoveryToken'
@@ -25,7 +26,7 @@ import { CommandFlags, TmuxWindow } from '../tmux/controlClient'
 import { ReservationKind } from '../reservations'
 import { describeScreen, ScreenLike } from '../screenReport'
 import { customTitleAction, programTitleFromPane, TabTitleController } from '../tabTitle'
-import { TomuxService } from '../tomux.service'
+import { TomuxService, TomuxTabInputs } from '../tomux.service'
 
 const tabbySsh = loadTabbySsh()
 const { SSHTabComponent } = tabbySsh
@@ -71,8 +72,14 @@ export class TomuxTabComponent extends SSHTabComponent {
     tomuxProfile!: TomuxProfile
     tomuxIntent: BindIntent = { kind: 'new' }
     tomuxError?: string
-    /** Session from a recovery token; wins over the profile's current setting. */
+    /** Session from a recovery token or a followed tab; wins over the profile's current setting. */
     tomuxSessionName?: string
+    /** Set when `+` followed the active tab (see followActiveTab.ts). */
+    tomuxFollowed?: boolean
+    /** The followed tab and its split; read once in ngOnInit (unfollowIfReplacing). */
+    tomuxFollowedFrom?: TomuxTabInputs['tomuxFollowedFrom']
+    /** Inputs of the profile that was asked for; read once in ngOnInit. */
+    tomuxUnfollowed?: TomuxTabInputs
 
     enableToolbar = true
     /**
@@ -156,7 +163,16 @@ export class TomuxTabComponent extends SSHTabComponent {
 
     ngOnInit (): void {
         this.tomux = this.injector.get(TomuxService)
+        this.unfollowIfReplacing()
         void this.sessionName // pin the session name now
+        if (this.tomuxFollowed) {
+            // Tabby gave this tab the default profile's title, colour and icon
+            // after the provider returned; use those of the profile it opened on.
+            const look = followedTabLook(this.tomuxProfile)
+            this.setTitle(look.title)
+            this.color = look.color
+            this.icon = look.icon
+        }
         repairSftpPanelAccessor(this, message => this.tomuxLog.warn(message))
         super.ngOnInit()
         this.destroyed$.subscribe({
@@ -175,6 +191,29 @@ export class TomuxTabComponent extends SSHTabComponent {
         if (this.tomuxIntent.kind !== 'new') {
             this.reserve(this.tomuxIntent.windowId, this.tomuxIntent.kind === 'adopt' ? 'restore' : 'reopen')
         }
+    }
+
+    /**
+     * Tabby's "Switch profile" to the default profile builds this tab through
+     * the same path as `+`, so it followed the tab it now replaces. Open the
+     * profile that was asked for instead (design D6). Runs before the session
+     * name is pinned; drops the references either way.
+     */
+    private unfollowIfReplacing (): void {
+        const from = this.tomuxFollowedFrom
+        const unfollowed = this.tomuxUnfollowed
+        this.tomuxFollowedFrom = undefined
+        this.tomuxUnfollowed = undefined
+        if (!this.tomuxFollowed || !from || !unfollowed || !followedTabWasReplaced(from.tab, from.container)) {
+            return
+        }
+        this.profile = unfollowed.profile as any
+        this.tomuxProfile = unfollowed.tomuxProfile
+        this.tomuxIntent = unfollowed.tomuxIntent
+        this.tomuxError = unfollowed.tomuxError
+        this.tomuxSessionName = undefined
+        this.tomuxFollowed = false
+        this.tomuxLog.info('Switch profile: opening the requested profile, not the session of the tab being replaced')
     }
 
     /** Called by TomuxService when the window this restored tab reserved no longer exists. */
