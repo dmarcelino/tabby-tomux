@@ -5,6 +5,7 @@
  * so no shell, prompt or banner ever reaches the control-mode parser.
  */
 import { Observable, Subscription } from 'rxjs'
+import { TmuxVersionNoOutputError } from './tmux/transport'
 import type { ControlChannel, ControlTransport } from './tmux/transport'
 import { shellescape } from './tmux/controlClient'
 
@@ -66,38 +67,60 @@ export class SshControlTransport implements ControlTransport {
     }
 
     async readTmuxVersion (): Promise<string> {
-        const ch = await this.openChannel()
+        let sessionDestroyed = false
+        const markDestroyed = (): void => { sessionDestroyed = true }
+        // Watch from before the channel opens. SSHSession.destroy() calls
+        // next() then complete(), so a destroy that already happened only
+        // reaches this subscriber as complete.
+        const subscriptions = new Subscription()
+        subscriptions.add(this.session.willDestroy$.subscribe({ next: markDestroyed, complete: markDestroyed }))
+        // One deadline for opening the channel, the exec request and the reply:
+        // any of them can hang on a connection that is going away.
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const deadline = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error('tmux -V did not answer in time')), VERSION_TIMEOUT_MS)
+        })
+        // Awaited only through Promise.race; never let it reject unobserved.
+        deadline.catch(() => undefined)
         const chunks: Uint8Array[] = []
         const errChunks: Uint8Array[] = []
         let gotEof = false
-        const subscriptions = new Subscription()
-        let timer: ReturnType<typeof setTimeout> | undefined
-        const done = new Promise<void>((resolve, reject) => {
-            timer = setTimeout(() => reject(new Error('tmux -V did not answer in time')), VERSION_TIMEOUT_MS)
-            subscriptions.add(ch.data$.subscribe(d => chunks.push(d)))
-            subscriptions.add(ch.extendedData$.subscribe(([, d]) => errChunks.push(d)))
-            subscriptions.add(ch.eof$.subscribe(() => { gotEof = true }))
-            subscriptions.add(ch.closed$.subscribe(() => resolve()))
-        })
-        // `done` is awaited only after requestExec succeeds; never let it
-        // reject unobserved when requestExec fails first.
-        done.catch(() => undefined)
         let started = 0
         try {
-            started = Date.now()
-            // `2>&1` so that "tmux: command not found" reaches the caller's error message.
-            await ch.requestExec('tmux -V 2>&1')
-            await done
+            const opening = this.openChannel()
+            let ch: RusshChannel
+            try {
+                ch = await Promise.race([opening, deadline])
+            } catch (error) {
+                // Gave up first: close the channel if it still opens.
+                opening.then(late => closeQuietly(late), () => undefined)
+                throw error
+            }
+            try {
+                const done = new Promise<void>(resolve => {
+                    subscriptions.add(ch.data$.subscribe(d => chunks.push(d)))
+                    subscriptions.add(ch.extendedData$.subscribe(([, d]) => errChunks.push(d)))
+                    subscriptions.add(ch.eof$.subscribe(() => { gotEof = true }))
+                    subscriptions.add(ch.closed$.subscribe(() => resolve()))
+                })
+                started = Date.now()
+                // `2>&1` so that "tmux: command not found" reaches the caller's error message.
+                await Promise.race([ch.requestExec('tmux -V 2>&1'), deadline])
+                await Promise.race([done, deadline])
+            } finally {
+                subscriptions.unsubscribe()
+                void closeQuietly(ch)
+            }
         } finally {
             clearTimeout(timer)
             subscriptions.unsubscribe()
-            void closeQuietly(ch)
         }
         const output = decode(chunks)
         if (!output) {
             // Output from the remote shell itself (not tmux) only reaches stderr.
-            throw new Error(`no output; stderr: ${JSON.stringify(decode(errChunks))}; ` +
-                `EOF: ${gotEof ? 'yes' : 'no'}; channel closed after ${Date.now() - started} ms`)
+            throw new TmuxVersionNoOutputError(`no output; stderr: ${JSON.stringify(decode(errChunks))}; ` +
+                `EOF: ${gotEof ? 'yes' : 'no'}; channel closed after ${Date.now() - started} ms; ` +
+                `SSH session destroyed: ${sessionDestroyed ? 'yes' : 'no'}`, sessionDestroyed)
         }
         return output
     }
@@ -109,6 +132,19 @@ export class SshControlTransport implements ControlTransport {
         }
         return client.activateChannel(await client.openSessionChannel())
     }
+}
+
+const sessionNumbers = new WeakMap<object, number>()
+let nextSessionNumber = 1
+
+/** A number that tells SSH sessions apart in the log ("SSH session #2"). */
+export function sshSessionNumber (session: object): number {
+    let n = sessionNumbers.get(session)
+    if (n === undefined) {
+        n = nextSessionNumber++
+        sessionNumbers.set(session, n)
+    }
+    return n
 }
 
 function decode (chunks: Uint8Array[]): string {

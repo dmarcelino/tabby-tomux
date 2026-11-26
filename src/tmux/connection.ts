@@ -31,6 +31,7 @@ import {
     TmuxWindow,
     versionAtLeast,
 } from './controlClient'
+import { TmuxVersionNoOutputError } from './transport'
 import type { ControlChannel, ControlTransport } from './transport'
 
 /** Oldest tmux tomux supports: `refresh-client -C` needs 2.1 (D4). */
@@ -52,6 +53,10 @@ export interface TomuxConnectionOptions {
     readyTimeoutMs?: number
     /** How long `detach()` waits for tmux to confirm before closing the channel. */
     detachTimeoutMs?: number
+    /** Names the SSH session the connection runs on, for the log (e.g. "SSH session #2"). */
+    sessionLabel?: string
+    /** Receives warnings worth a log line, such as a retried version check. */
+    warn?: (message: string) => void
 }
 
 /** `exitReason` when tmux moved the control client to another session. */
@@ -119,7 +124,7 @@ export class TomuxConnection {
         let connection: TomuxConnection | null = null
         let channel: ControlChannel | null = null
         try {
-            const version = await checkTmuxVersion(transport)
+            const version = await checkTmuxVersion(transport, opts.warn)
             channel = await transport.openControlChannel(sessionName)
             connection = new TomuxConnection(transport, channel, sessionName, version, opts)
             await connection.init(opts.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS)
@@ -170,6 +175,11 @@ export class TomuxConnection {
     // -----------------------------------------------------------------------
     // State
     // -----------------------------------------------------------------------
+
+    /** The `sessionLabel` the connection was opened with, if any. */
+    get sessionLabel (): string | undefined {
+        return this.opts.sessionLabel
+    }
 
     get state (): TomuxConnectionState {
         return this._state
@@ -376,11 +386,11 @@ export class TomuxConnection {
  * installed. A version string without major.minor (e.g. "tmux master", a
  * development build) is accepted.
  */
-async function checkTmuxVersion (transport: ControlTransport): Promise<string> {
+async function checkTmuxVersion (transport: ControlTransport, warn?: (message: string) => void): Promise<string> {
     const required = `${MIN_TMUX_VERSION.major}.${MIN_TMUX_VERSION.minor}`
     let output: string
     try {
-        output = (await transport.readTmuxVersion()).trim()
+        output = (await readTmuxVersionRetryingEmpty(transport, warn)).trim()
     } catch (error) {
         const detail = error instanceof Error ? error.message : String(error)
         throw new TmuxVersionError(`no usable tmux (tmux -V failed: ${detail})`, required)
@@ -394,6 +404,29 @@ async function checkTmuxVersion (transport: ControlTransport): Promise<string> {
         throw new TmuxVersionError(firstLine, required)
     }
     return firstLine
+}
+
+/**
+ * Run `tmux -V`, and once more on a new channel when the first reply was empty
+ * while the SSH session stayed alive (change retry-empty-tmux-version: at
+ * Tabby startup the reply is sometimes lost, and a second attempt answers).
+ */
+async function readTmuxVersionRetryingEmpty (transport: ControlTransport, warn?: (message: string) => void): Promise<string> {
+    try {
+        return await transport.readTmuxVersion()
+    } catch (error) {
+        if (!(error instanceof TmuxVersionNoOutputError) || error.sessionDestroyed) {
+            throw error
+        }
+        warn?.(`tmux -V gave no output, trying once more (${error.message})`)
+        try {
+            return await transport.readTmuxVersion()
+        } catch (second) {
+            // The session can go between the attempts; keep the first details.
+            const detail = second instanceof Error ? second.message : String(second)
+            throw new Error(`${detail} (first attempt: ${error.message})`)
+        }
+    }
 }
 
 /**

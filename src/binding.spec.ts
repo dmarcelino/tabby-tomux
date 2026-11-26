@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import { describe, expect, it } from 'vitest'
-import { connectIntent, decideBinding, unclaimedWindows } from './binding'
+import { connectIntent, decideBinding, describeIntent, unclaimedWindows } from './binding'
 import type { TmuxWindow } from './tmux/controlClient'
 
 const win = (id: string, index: number): TmuxWindow => ({ id, index, name: `w${index}`, paneId: `%${index}`, active: false, automaticRename: true })
@@ -81,5 +81,13 @@ describe('connectIntent (Reconnect)', () => {
 describe('unclaimedWindows', () => {
     it('returns free windows in index order', () => {
         expect(unclaimedWindows(windows, owned('@2')).map(w => w.id)).toEqual(['@1', '@3'])
+    })
+})
+
+describe('describeIntent', () => {
+    it('names the kind and, for adopt and reopen, the window', () => {
+        expect(describeIntent({ kind: 'new' })).toBe('new')
+        expect(describeIntent({ kind: 'adopt', windowId: '@3' })).toBe('adopt @3')
+        expect(describeIntent({ kind: 'reopen', windowId: '@4' })).toBe('reopen @4')
     })
 })

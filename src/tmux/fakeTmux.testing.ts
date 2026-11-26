@@ -14,6 +14,8 @@ export type Reply = string[] | { error: string } | 'silent'
 export interface FakeTmuxOptions {
     version?: string
     versionError?: Error
+    /** One reply per readTmuxVersion call, in order (an Error rejects); then `version`/`versionError`. */
+    versionReplies?: Array<string | Error>
     /** Windows reported by list-windows, as "@id|index|%pane|active|auto|name". */
     windows?: string[]
     /** session_created / client_created seconds reported by display-message. */
@@ -111,11 +113,18 @@ export class FakeTmux implements ControlTransport {
     readonly channels: FakeChannel[] = []
     holds = 0
     releases = 0
+    /** How many times readTmuxVersion was called. */
+    versionReads = 0
     openedSessions: string[] = []
     /** Per-command overrides, checked before the defaults. */
     readonly overrides = new Map<string, Reply>()
 
-    constructor (public opts: FakeTmuxOptions = {}) {}
+    /** This fake's own copy of opts.versionReplies, used up one per call. */
+    private readonly versionReplies: Array<string | Error>
+
+    constructor (public opts: FakeTmuxOptions = {}) {
+        this.versionReplies = [...(opts.versionReplies ?? [])]
+    }
 
     get channel (): FakeChannel {
         return this.channels[this.channels.length - 1]
@@ -130,6 +139,14 @@ export class FakeTmux implements ControlTransport {
     }
 
     async readTmuxVersion (): Promise<string> {
+        this.versionReads++
+        const scripted = this.versionReplies.shift()
+        if (scripted instanceof Error) {
+            throw scripted
+        }
+        if (scripted !== undefined) {
+            return scripted
+        }
         if (this.opts.versionError) {
             throw this.opts.versionError
         }

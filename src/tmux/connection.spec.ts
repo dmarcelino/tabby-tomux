@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { detectCreatedSession, TmuxVersionError, TomuxConnection, TomuxConnectionEvent } from './connection'
 import { FakeTmux, settle } from './fakeTmux.testing'
+import { TmuxVersionNoOutputError } from './transport'
 
 const KILL = /^kill-/u
 
@@ -40,9 +41,78 @@ describe('TomuxConnection.open', () => {
         expect(tmux.releases).toBe(1)
     })
 
+    describe('empty tmux version reply is retried once', () => {
+        const empty = (n: number, destroyed = false): TmuxVersionNoOutputError =>
+            new TmuxVersionNoOutputError(`no output; attempt ${n}; SSH session destroyed: ${destroyed ? 'yes' : 'no'}`, destroyed)
+
+        it('second attempt answers: connects, and warns once with the first attempt\'s diagnostics', async () => {
+            const tmux = new FakeTmux({ versionReplies: [empty(1), 'tmux 3.5a\n'] })
+            const warnings: string[] = []
+            const conn = await TomuxConnection.open(tmux, 'main', { warn: m => warnings.push(m) })
+            expect(conn.tmuxVersion).toBe('tmux 3.5a')
+            expect(tmux.versionReads).toBe(2)
+            expect(warnings).toEqual(['tmux -V gave no output, trying once more (no output; attempt 1; SSH session destroyed: no)'])
+            expect(tmux.channels).toHaveLength(1)
+        })
+
+        it('second attempt fails too: shows both attempts\' diagnostics, second first, and keeps nothing open', async () => {
+            const tmux = new FakeTmux({ versionReplies: [empty(1), empty(2)] })
+            const error = await TomuxConnection.open(tmux, 'main', { warn: () => undefined }).catch(e => e)
+            expect(error).toBeInstanceOf(TmuxVersionError)
+            expect(error.message).toBe('tomux needs tmux 2.1 or newer, but the host has no usable tmux (tmux -V failed: ' +
+                'no output; attempt 2; SSH session destroyed: no (first attempt: no output; attempt 1; SSH session destroyed: no))')
+            expect(tmux.versionReads).toBe(2)
+            expect(tmux.channels).toHaveLength(0)
+            expect(tmux.releases).toBe(1)
+        })
+
+        it('second attempt fails another way (session gone): the first attempt\'s diagnostics still show', async () => {
+            const tmux = new FakeTmux({ versionReplies: [empty(1), new Error('The SSH connection is not logged in')] })
+            const error = await TomuxConnection.open(tmux, 'main', { warn: () => undefined }).catch(e => e)
+            expect(error).toBeInstanceOf(TmuxVersionError)
+            expect(error.message).toContain('tmux -V failed: The SSH connection is not logged in ' +
+                '(first attempt: no output; attempt 1; SSH session destroyed: no)')
+            expect(tmux.releases).toBe(1)
+        })
+
+        it('SSH session destroyed during the check: no second attempt, the error is shown', async () => {
+            const tmux = new FakeTmux({ versionReplies: [empty(1, true), 'tmux 3.5a\n'] })
+            const warnings: string[] = []
+            const error = await TomuxConnection.open(tmux, 'main', { warn: m => warnings.push(m) }).catch(e => e)
+            expect(error).toBeInstanceOf(TmuxVersionError)
+            expect(error.message).toContain('no usable tmux (tmux -V failed: no output; attempt 1; SSH session destroyed: yes)')
+            expect(tmux.versionReads).toBe(1)
+            expect(warnings).toEqual([])
+            expect(tmux.channels).toHaveLength(0)
+        })
+
+        it('fakes built from one options object each get all scripted replies', async () => {
+            const opts = { versionReplies: [empty(1), 'tmux 3.5a\n'] }
+            for (const tmux of [new FakeTmux(opts), new FakeTmux(opts)]) {
+                await TomuxConnection.open(tmux, 'main')
+                expect(tmux.versionReads).toBe(2)
+            }
+            expect(opts.versionReplies).toHaveLength(2)
+        })
+
+        it('other failures are not retried: a failed check, or output that is not from tmux', async () => {
+            const failed = new FakeTmux({ versionReplies: [new Error('tmux -V did not answer in time'), 'tmux 3.5a\n'] })
+            await expect(TomuxConnection.open(failed, 'main')).rejects.toThrow(/did not answer in time/u)
+            expect(failed.versionReads).toBe(1)
+            const missing = new FakeTmux({ versionReplies: ['bash: tmux: command not found', 'tmux 3.5a\n'] })
+            await expect(TomuxConnection.open(missing, 'main')).rejects.toThrow(/no tmux/u)
+            expect(missing.versionReads).toBe(1)
+        })
+    })
+
     it('accepts tmux 2.1 and development builds without a number', async () => {
         await expect(openFake({ version: 'tmux 2.1' })).resolves.toBeDefined()
         await expect(openFake({ version: 'tmux master' })).resolves.toBeDefined()
+    })
+
+    it('keeps the label of the SSH session it was opened on, for the log', async () => {
+        const conn = await TomuxConnection.open(new FakeTmux(), 'main', { sessionLabel: 'SSH session #3' })
+        expect(conn.sessionLabel).toBe('SSH session #3')
     })
 
     it('attaches to an existing session and lists its windows', async () => {
