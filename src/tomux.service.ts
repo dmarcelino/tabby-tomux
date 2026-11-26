@@ -12,7 +12,7 @@ import { BindIntent } from './binding'
 import { acquireTracked } from './acquire'
 import { planAdoption, Reservations } from './reservations'
 import { CloseIntentTracker } from './closeIntent'
-import type { TomuxProfile } from './profile'
+import { profileTabLook, TabLook, TomuxProfile } from './profile'
 import { TomuxConnection } from './tmux/connection'
 import { ConnectionRegistry } from './tmux/connectionRegistry'
 import { CommandFlags } from './tmux/controlClient'
@@ -333,11 +333,15 @@ export class TomuxService {
         }
     }
 
-    /** Inputs for a tab that adopts `windowId` (async: looks up the SSH profile). */
-    private async prepareAdoptTab (state: ConnectionState, conn: TomuxConnection, windowId: string): Promise<TomuxTabInputs> {
+    /**
+     * Inputs for a tab that adopts `windowId` (async: looks up the SSH profile).
+     * The tab gets the title, colour and icon Tabby gives a tab opened from
+     * the tomux profile (change adopted-tab-profile-look, design D1).
+     */
+    private async prepareAdoptTab (state: ConnectionState, conn: TomuxConnection, windowId: string): Promise<TomuxTabInputs & TabLook> {
         const inputs = await this.tabInputs(state.tomuxProfile, { kind: 'adopt', windowId })
         inputs.tomuxSessionName = conn.sessionName
-        return inputs
+        return { ...inputs, ...profileTabLook(state.tomuxProfile) }
     }
 
     /** Adds an adopted tab at the end of the tab bar. Call inside Angular's zone, or the tab never renders (spike 2). */
