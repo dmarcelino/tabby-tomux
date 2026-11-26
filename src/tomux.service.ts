@@ -35,8 +35,14 @@ export interface TomuxTabInputs {
     tomuxIntent: BindIntent
     /** Set when the SSH profile the tomux profile points at no longer exists. */
     tomuxError?: string
-    /** Session from a recovery token; wins over the profile's current setting. */
+    /** Session from a recovery token or a followed tab; wins over the profile's current setting. */
     tomuxSessionName?: string
+    /** Set when `+` followed the active tab: the tab takes its look from tomuxProfile (followActiveTab.ts). */
+    tomuxFollowed?: boolean
+    /** The followed tab and the split that held it, to tell `+` from Tabby's "Switch profile". */
+    tomuxFollowedFrom?: { tab: unknown, container: { getAllTabs (): unknown[] } | null }
+    /** Inputs for the profile that was asked for, used when the followed tab turns out to be replaced. */
+    tomuxUnfollowed?: TomuxTabInputs
 }
 
 @Injectable({ providedIn: 'root' })

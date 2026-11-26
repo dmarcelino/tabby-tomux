@@ -186,3 +186,41 @@ Found while testing, not part of this change (issue #1): a restored tab that is 
 ## Home and End in application cursor mode (change fix-app-cursor-home-end, task 3.2), 2026-11-25
 
 The user tested the fix by hand in a running Tabby and reported that the Home and End keys work. The report did not name the Tabby version, the host or the programs used, and did not mention the arrow keys, so the arrow scenario in the change's spec is covered by unit tests only.
+
+## `+` follows the active tab (change plus-follows-active-tab, tasks 3.1–3.3), 2026-11-25
+
+Setup: Tabby 1.0.238 on macOS (arm64), plugin built from the change's branch (389 unit tests), started with `TOMUX_DEV=1`. The test host runs Debian 13 with tmux 3.5a, reached through the SSH port forward. Default profile: the tomux profile for session `tomux-e2e`, given a red tab colour for these checks. A second tomux profile, with no colour, uses session `tomux-fresh` on the same host. Tabby was driven through its DevTools port. `+` was the real tab-bar button, and the new-tab hotkey was a real `⌘-T` key event. Choosing a profile "from the selector" called `ProfilesService.openNewTabForProfile` inside Angular's zone, as the selector's own callback does. The selector UI itself was not clicked. Every result was checked on the host with `tmux list-windows -a` and `tmux list-clients`.
+
+| Check | Result |
+|---|---|
+| Profile tomux receives on `+` (3.1) | `id` is the default profile's id (`tomux:e2e`). |
+| `+` on a non-tomux tab, default session connected | New window in the default session, tab not followed. |
+| `+` on a tab of the default session | New window in that session. |
+| Choosing the other profile while a default-session tab is active | Opens the other profile's session, not the active tab's. |
+| `+` on a `tomux-fresh` tab | New window in `tomux-fresh`, one client. The tab shows `tomux-fresh` (not the default's name) until tmux names the window, and has no colour bar (3.3). |
+| Choosing the default profile while a `tomux-fresh` tab is active | New window in `tomux-fresh`, as with `+`. |
+| `⌘-T` with the focused pane of a two-pane split on `tomux-fresh` | New window in `tomux-fresh`. Every Tabby tab is a split container, so this path runs on every `+`. |
+| Session name changed to `tomux-fresh2` in the profile, `+` on an older `tomux-fresh` tab | New window in `tomux-fresh`. No `tomux-fresh2` session was created. |
+| `+` on a tab whose SSH profile is missing | Falls back to the default session, with the default's colour. |
+| `+` on a disconnected `tomux-fresh` tab (tmux client killed with `kill -9`) | New tab in `tomux-fresh` bound to a newly created window. The disconnected tabs' windows were not taken and got no extra tabs. |
+| Second Tabby window showing only `tomux-fresh`, `+` with a `tomux-fresh` tab active (the reported problem) | Exactly one new tab in that window, for a new `tomux-fresh` window. No tab opened for `tomux-e2e`'s windows, and `tomux-e2e` kept its single client. |
+| Same window, `+` with its Welcome tab active | Tabs opened for all three `tomux-e2e` windows (first open in that window; out of scope, stated in the README). |
+| **New terminal** from the menu of an inactive `tomux-e2e` tab while a `tomux-fresh` tab is active | New window in `tomux-fresh`: it follows the active tab, not the tab whose menu was used (stated in the README). |
+
+Found and fixed during this run: a followed tab got colour `''` instead of none, because a profile's config proxy reads an unset colour as `''`. It now treats any empty value as none, as Tabby does.
+
+Seen but outside this change: detaching a session's control client from the host (`tmux detach-client`) closes all of that session's tabs, because tmux sends `%exit`. The windows keep running. The test used `kill -9` on the client instead, to get a lost connection.
+
+Not run: clicking the profile selector UI itself, and checks on Windows or Linux.
+
+### Code-review fixes (task 5.4), 2026-11-25
+
+Same setup (Tabby 1.0.238 on macOS, Debian 13 test host with tmux 3.5a, driven through DevTools). Two extra tomux profiles were added for this run and removed afterwards.
+
+| Check | Result |
+|---|---|
+| A tab of a tomux profile that was deleted after the tab opened, `+` | Falls back to the default session. |
+| A tab whose session name is `a.b` (shows "tmux does not allow "." in session names."), `+` | Falls back to the default session. |
+| Tabby's **Switch profile** to the default profile on the only tab of `tomux-fresh` (Tabby's own `switchTabProfile`, with the profile picker stubbed to return the default) | Before the fix: the replacement followed the replaced tab into `tomux-fresh` on a new window. After the fix (design D6): the replacement opens on a new window in the default session. The replaced tab's window keeps running: Tabby destroys the old tab without a user close, so tomux does not kill its window. |
+| Switch profile to the default on the focused pane of a two-pane `tomux-fresh` split | That pane becomes a tab on the default session. The other pane is unchanged. |
+| After the fix: `+`, `⌘-T`, and `+` from a pane of a two-pane split, each on a `tomux-fresh` tab | Each still follows: one new window in `tomux-fresh`. |
