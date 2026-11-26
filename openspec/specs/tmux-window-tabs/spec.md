@@ -239,4 +239,4 @@ tomux tabs SHALL behave as ordinary Tabby top-level tabs for Tabby's tab navigat
 
 #### Scenario: Reorder tabs
 - **WHEN** the user moves a tomux tab left
-- **THEN** the tab moves in Tabby's tab bar and the order of windows in tmux is unchanged
+- **THEN** the tab moves in Tabby's tab bar and the tmux window numbers are unchanged (the new order is recorded only in `@tomux-order`, see `tmux-tab-recovery`)
