@@ -13,7 +13,7 @@
 ## 3. Integration
 
 - [x] 3.1 Run `npm run typecheck`, `npm test` and `npm run build`. Check that all three pass and the build shows no new warnings.
-- [ ] 3.2 In the Tabby running on this machine (a test install; its session need not be preserved): link the plugin to this worktree, build, restart Tabby with `TOMUX_DEV=1`, and check that `log.txt` contains `tomux plugin loaded`. In an unnamed tomux window, run `printf '\033]2;fix login bug\007'` and then `printf '\033_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\033\\'`. Check that the tab still shows `fix login bug` and that `tmux display -p '#{pane_title}'` shows the query. Restart Tabby and check that the restored tab shows `tmux:<n>`, not the query. Do the restart once on the unfixed build first, to show the bug reproduces. Record the results in `doc/TESTING.md`. If any step can't be done in the session, say so in the final report and leave the task unticked.
+- [x] 3.2 In the Tabby running on this machine (a test install; its session need not be preserved): link the plugin to this worktree, build, restart Tabby with `TOMUX_DEV=1`, and check that `log.txt` contains `tomux plugin loaded`. In an unnamed tomux window, run `printf '\033]2;fix login bug\007'` and then `printf '\033_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\033\\'`. Check that the tab still shows `fix login bug` and that `tmux display -p '#{pane_title}'` shows the query. Restart Tabby and check that the restored tab shows `tmux:<n>`, not the query. Do the restart once on the unfixed build first, to show the bug reproduces. Record the results in `doc/TESTING.md`. If any step can't be done in the session, say so in the final report and leave the task unticked.
 
 ## Workflow follow-up
 

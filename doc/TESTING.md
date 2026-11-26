@@ -241,3 +241,9 @@ In window `@2` of session `tomux-e2e`, a script drew `status ESC[4mlast ESC[0m` 
 Not checked in this run: restoring a tab that runs Claude Code. The test host has no Claude Code, and the only Claude Code on the test machine runs in tmux sessions in daily use, which a tomux tab would resize.
 
 Afterwards, 2026-11-26: the user tested the branch of PR #11 by hand in Tabby and reported that it worked. The report did not name the Tabby version or the programs in the restored tabs.
+
+## Graphics query as a pane title (change ignore-kitty-graphics-pane-title, task 3.2), 2026-11-26
+
+Before the fix, a throwaway local tmux 3.8 server showed the cause: after a program set the title `fix login bug` with OSC 2 and then wrote the Kitty graphics query `ESC _ Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA ESC \`, `display-message -p '#{host}|#{pane_title}'` returned the query as the pane title.
+
+Afterwards, 2026-11-26: the user tested the branch of PR #12 by hand in Tabby and reported that it worked. The report did not name the Tabby version, the tmux version, or whether the bug was first reproduced on the unfixed build.
