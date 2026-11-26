@@ -6,8 +6,8 @@
 // Copyright (C) the tmux-integrated authors
 //
 // Changes: pure functions returning command strings; 1,024-byte cap; Ctrl-\ and non-ASCII-in-ESC fixes;
-// reply filter keeps CSI … R (modified F3); application-cursor-mode arrows, Home and End sent by name
-// (see 'tomux:' notes).
+// reply filter keeps CSI … R (modified F3); application-cursor-mode arrows, Home and End sent by name;
+// bare \n sent as C-j instead of Enter (see 'tomux:' notes).
 
 /**
  * Terminal input → tmux `send-keys` commands.
@@ -240,14 +240,12 @@ export function encodeSendKeys(data: string, paneId: string): string[] {
 
         const char = data[index];
 
-        // 3. Bare \n → Enter
-        if (char === '\n') {
-            commands.push(`send-keys -t ${paneId} Enter`);
-            index += 1;
-            continue;
-        }
-
-        // 4. Control characters (< 0x20) → C-x key names
+        // 3. Control characters (< 0x20) → C-x key names.
+        //    tomux: this includes a bare \n, which goes out as C-j (tmux
+        //    writes 0x0a). The original sent it as Enter, so the pane got
+        //    \r: a raw-mode reader waiting for \n (trzsz's tsz/trz) hung.
+        //    xterm.js sends \r for Enter and for pasted line breaks, and
+        //    that still maps to Enter through KEY_MAP.
         if (char.charCodeAt(0) < 0x20) {
             const letter = String.fromCharCode(char.charCodeAt(0) + 64).toLowerCase();
             // tomux: quote `C-\` (Ctrl-\, 0x1c). Unquoted, tmux's parser reads
@@ -259,7 +257,7 @@ export function encodeSendKeys(data: string, paneId: string): string[] {
             continue;
         }
 
-        // 5. Collect a run of printable characters.  Classify each as
+        // 4. Collect a run of printable characters.  Classify each as
         //    "safe literal" or "needs hex".  Build runs of the same kind.
         const cp = char.charCodeAt(0);
         if (canSendAsLiteral(cp)) {

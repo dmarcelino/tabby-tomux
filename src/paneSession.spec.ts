@@ -6,16 +6,37 @@ import { TomuxPaneSession, WORKING_DIRECTORY_TIMEOUT_MS } from './paneSession'
 import { paneSwitchMarker } from './tabTitle'
 
 // tabby-terminal needs Tabby's Angular runtime; a minimal BaseSession is enough
-// here. vi.mock is hoisted above the imports.
+// here. vi.mock is hoisted above the imports. As in Tabby, emitOutput is the
+// path through the session middleware (where plugins such as tabby-trzsz
+// listen), and output / binaryOutput are what the tab shows after it.
 vi.mock('tabby-terminal', () => ({
     BaseSession: class {
         open = false
         constructor (protected logger: unknown) {}
+        /** Everything shown in the tab, in order, whichever path it took. */
         readonly emitted: string[] = []
-        emitOutput (data: Buffer): void { this.emitted.push(data.toString('utf-8')) }
+        /** What went through the session middleware. */
+        readonly viaMiddleware: string[] = []
+        /** What was shown directly, past the middleware. */
+        readonly direct: string[] = []
+        readonly directBinary: string[] = []
+        protected output = { next: (text: string): void => { this.emitted.push(text); this.direct.push(text) } }
+        protected binaryOutput = { next: (data: Buffer): void => { this.directBinary.push(data.toString('utf-8')) } }
+        emitOutput (data: Buffer): void {
+            const text = data.toString('utf-8')
+            this.emitted.push(text)
+            this.viaMiddleware.push(text)
+        }
         async destroy (): Promise<void> { /* nothing to release */ }
     },
 }))
+
+interface RecordedOutput {
+    emitted: string[]
+    viaMiddleware: string[]
+    direct: string[]
+    directBinary: string[]
+}
 
 const CWD_COMMAND = 'display-message -p -t %0 "#{pane_current_path}"'
 const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), log: vi.fn() }
@@ -134,5 +155,66 @@ describe('TomuxPaneSession start', () => {
         // paints with the current background (design decision 1b).
         expect(text.startsWith('\x1b[0m\x1b[2J\x1b[3J\x1b[H\x1b[0mhistory line')).toBe(true)
         expect(text).toContain('$ prompt\x1b[0m\x1b[2;3H')
+    })
+})
+
+// History drawn again from tmux is not new output: it must reach the tab
+// without passing through the session middleware, or tabby-trzsz would see
+// the start line of a finished transfer and start a transfer that does not
+// exist. Output the pane produces afterwards still goes through it.
+describe('TomuxPaneSession replays bypass the session middleware', () => {
+    const CAPTURE = 'capture-pane -p -e -J -S - -t %0'
+    const CURSOR = 'display-message -p -t %0 "#{cursor_x} #{cursor_y} #{pane_width} #{pane_height}"'
+    const TRZSZ_LINE = '::TRZSZ:TRANSFER:S:1.1.8:1732600000000:0'
+
+    async function setup (captureReply: string[] | 'silent' = ['$ tsz file', TRZSZ_LINE, '$ ']): Promise<{ tmux: FakeTmux, session: InstanceType<typeof TomuxPaneSession> & RecordedOutput }> {
+        const tmux = new FakeTmux()
+        tmux.overrides.set(CAPTURE, captureReply)
+        tmux.overrides.set(CURSOR, captureReply === 'silent' ? 'silent' : ['2 2 80 24'])
+        const conn = await TomuxConnection.open(tmux, 'main')
+        const session = new TomuxPaneSession(logger as any, conn, '%0', () => undefined) as any
+        return { tmux, session }
+    }
+
+    it('shows an adopted snapshot directly and never through the middleware', async () => {
+        const { session } = await setup()
+        await session.start({ adopt: true })
+        expect(session.direct.join('')).toContain(TRZSZ_LINE)
+        expect(session.directBinary).toEqual(session.direct)
+        expect(session.viaMiddleware.join('')).not.toContain('TRZSZ')
+    })
+
+    it('shows a reconnect redraw, clear included, directly', async () => {
+        const { session } = await setup()
+        await session.start({ adopt: true, redraw: true })
+        expect(session.direct.join('').startsWith('\x1b[0m\x1b[2J\x1b[3J\x1b[H')).toBe(true)
+        expect(session.direct.join('')).toContain(TRZSZ_LINE)
+        expect(session.viaMiddleware).toEqual([])
+    })
+
+    it('shows a pane-switch redraw (marker, clear and capture) directly', async () => {
+        const { session } = await setup()
+        await session.start()
+        session.switchPane('%0')
+        await settle()
+        expect(session.direct.join('')).toContain(paneSwitchMarker('%0') + '\x1b[0m\x1b[2J\x1b[3J\x1b[H')
+        expect(session.direct.join('')).toContain(TRZSZ_LINE)
+        expect(session.viaMiddleware.join('')).not.toContain('TRZSZ')
+    })
+
+    it('sends output newer than the capture, and later output, through the middleware after the replay', async () => {
+        const { tmux, session } = await setup('silent')
+        const started = session.start({ adopt: true })
+        await settle()
+        tmux.channel.send('%output %0 old\r\n')          // before the capture: inside it, dropped
+        tmux.channel.reply(['$ tsz file', TRZSZ_LINE])       // capture-pane
+        tmux.channel.send('%output %0 newer\r\n')        // after the capture started
+        tmux.channel.reply(['2 1 80 24'])                    // cursor
+        await started
+        tmux.channel.send('%output %0 later\r\n')
+        await settle()
+        expect(session.viaMiddleware).toEqual(['newer', 'later'])
+        expect(session.emitted.map(text => text.includes(TRZSZ_LINE) ? 'REPLAY' : text))
+            .toEqual(['REPLAY', 'newer', 'later'])
     })
 })

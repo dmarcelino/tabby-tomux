@@ -7,6 +7,7 @@
 import { Logger } from 'tabby-core'
 import { BaseSession } from 'tabby-terminal'
 import { OutputGate } from './outputGate'
+import { showPastSessionMiddleware } from './tabbyAdapter'
 import { paneSwitchMarker } from './tabTitle'
 import type { TomuxConnection } from './tmux/connection'
 import { CommandFlags, TmuxPaneOutput } from './tmux/controlClient'
@@ -32,7 +33,7 @@ const CLEAR_SCREEN = RESET_STYLE + '\x1b[2J\x1b[3J\x1b[H'
 
 export class TomuxPaneSession extends BaseSession {
     private normalizer = new PaneOutputNormalizer()
-    private gate = new OutputGate(text => this.emitText(text))
+    private gate = new OutputGate(text => this.emitText(text), text => this.showReplay(text))
     private listening = false
     private readonly onOutput = (out: TmuxPaneOutput): void => {
         if (out.paneId === this.paneIdValue) {
@@ -204,9 +205,29 @@ export class TomuxPaneSession extends BaseSession {
         }
     }
 
+    /** Output the pane produced: through the session middleware, as usual. */
     private emitText (text: string): void {
         if (text) {
             this.emitOutput(Buffer.from(text, 'utf-8'))
+        }
+    }
+
+    /**
+     * History and screen drawn again from tmux (adopt, reconnect redraw, pane
+     * switch). It goes to the tab without passing through the session
+     * middleware, because it is not new output: plugins in the middleware
+     * would react to old text. tabby-trzsz, for one, would see the start line
+     * of a finished transfer and start a transfer that does not exist.
+     *
+     * Order: `OutputGate.open` calls this synchronously before it hands the
+     * held output to `emitText`, so the replay is shown first whether or not
+     * Tabby has released the session's initial output buffer yet (it often
+     * has: `setSession` on a ready tab releases it at once). The tab is
+     * subscribed before `start()`, because `setSession` comes first.
+     */
+    private showReplay (text: string): void {
+        if (text) {
+            showPastSessionMiddleware(this, Buffer.from(text, 'utf-8'))
         }
     }
 }

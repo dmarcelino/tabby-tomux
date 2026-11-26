@@ -9,6 +9,7 @@ import {
     resolveSftpPanel,
     SFTP_PANEL_STYLE,
     SftpPanelOptions,
+    showPastSessionMiddleware,
 } from './tabbyAdapter'
 
 afterEach(() => {
@@ -255,5 +256,34 @@ describe('repairSftpPanelAccessor', () => {
         const warn = vi.fn()
         expect(repairSftpPanelAccessor({}, warn)).toBe(false)
         expect(warn).not.toHaveBeenCalled()
+    })
+})
+
+describe('showPastSessionMiddleware', () => {
+    // Stands in for a BaseSession: Tabby feeds what its middleware lets
+    // through to these two protected subjects, and the tab shows them.
+    function fakeSession (): { session: any, text: string[], binary: Buffer[], middleware: Buffer[] } {
+        const text: string[] = []
+        const binary: Buffer[] = []
+        const middleware: Buffer[] = []
+        const output = new Subject<string>()
+        const binaryOutput = new Subject<Buffer>()
+        output.subscribe(t => text.push(t))
+        binaryOutput.subscribe(b => binary.push(b))
+        const session = {
+            output,
+            binaryOutput,
+            middleware: { feedFromSession: (data: Buffer) => middleware.push(data) },
+            emitOutput (data: Buffer) { this.middleware.feedFromSession(data) },
+        }
+        return { session, text, binary, middleware }
+    }
+
+    it('hands the data to both output subjects and not to the middleware', () => {
+        const { session, text, binary, middleware } = fakeSession()
+        showPastSessionMiddleware(session, Buffer.from('héllo\r\n', 'utf-8'))
+        expect(text).toEqual(['héllo\r\n'])
+        expect(binary.map(b => b.toString('utf-8'))).toEqual(['héllo\r\n'])
+        expect(middleware).toEqual([])
     })
 })

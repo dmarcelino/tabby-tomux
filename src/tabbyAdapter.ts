@@ -27,11 +27,17 @@
  *   exactly as tabby-ssh's own SSH tab template does;
  * - `SSHMultiplexerService.getSession()` and the `SSHSession` and russh
  *   members listed in sshTransport.ts.
+ *
+ * Tabby internals tomux depends on (change support-trzsz, design decision 2):
+ * - `BaseSession`'s protected `output` and `binaryOutput` subjects, which
+ *   carry what the tab shows once the session middleware has run. Only
+ *   `showPastSessionMiddleware()` touches them.
  */
 import * as fs from 'fs'
 import * as path from 'path'
 import { Injector, NgZone, Type, ViewContainerRef } from '@angular/core'
-import type { Subscription } from 'rxjs'
+import type { Subject, Subscription } from 'rxjs'
+import type { BaseSession } from 'tabby-terminal'
 import type * as TabbySsh from 'tabby-ssh'
 import type { SSHTabComponent } from 'tabby-ssh/typings/components/sshTab.component'
 
@@ -258,4 +264,26 @@ export function repairSftpPanelAccessor (tab: object, warn: (message: string) =>
     delete (tab as { sftpPanelVisible?: unknown }).sftpPanelVisible
     warn('tabby-ssh defines sftpPanelVisible on each tab; tomux removed it so its SFTP panel can open')
     return true
+}
+
+/** `BaseSession`'s protected output subjects (declared in tabby-terminal's typings). */
+interface SessionOutputSubjects {
+    output: Subject<string>
+    binaryOutput: Subject<Buffer>
+}
+
+/**
+ * Shows `data` in the session's tab without passing it through the session
+ * middleware, the way `BaseSession` passes on what its middleware lets
+ * through (`emitOutput` is the path through it). For text that is not new
+ * output, such as history drawn again from tmux: plugins in the middleware,
+ * tabby-trzsz among them, would otherwise react to it.
+ *
+ * It also skips `BaseSession`'s initial output buffer, so the tab must
+ * already be subscribed to the session (Tabby's `setSession` does that).
+ */
+export function showPastSessionMiddleware (session: BaseSession, data: Buffer): void {
+    const subjects = session as unknown as SessionOutputSubjects
+    subjects.output.next(data.toString('utf-8'))
+    subjects.binaryOutput.next(data)
 }

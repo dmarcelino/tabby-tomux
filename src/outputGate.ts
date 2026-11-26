@@ -9,11 +9,24 @@
  * everything held before the capture's %begin is already inside the capture
  * and is dropped; everything after it is newer than the capture and is
  * replayed after the snapshot (and its cursor position).
+ *
+ * The snapshot and the pane's own output leave through different callbacks.
+ * The snapshot is history drawn again from tmux, not new output, so the
+ * session shows it without passing it through Tabby's session middleware:
+ * a plugin such as tabby-trzsz would otherwise react to old text in it
+ * (the start line of a finished transfer) as if the pane had just printed it.
  */
 export class OutputGate {
     private held: string[] | null = []
 
-    constructor (private emit: (data: string) => void) { }
+    /**
+     * @param emitLive   output the pane produced (held or passed through)
+     * @param emitReplay the snapshot handed to `open`
+     */
+    constructor (
+        private emitLive: (data: string) => void,
+        private emitReplay: (data: string) => void,
+    ) { }
 
     get isHolding (): boolean {
         return this.held !== null
@@ -23,7 +36,7 @@ export class OutputGate {
         if (this.held) {
             this.held.push(data)
         } else {
-            this.emit(data)
+            this.emitLive(data)
         }
     }
 
@@ -34,15 +47,18 @@ export class OutputGate {
         }
     }
 
-    /** Shows `snapshot` (if any), then everything held, then passes output straight through. */
+    /**
+     * Shows `snapshot` (if any) through the replay output, then everything
+     * held, then passes output straight through.
+     */
     open (snapshot?: string | null): void {
         const held = this.held ?? []
         this.held = null
         if (snapshot) {
-            this.emit(snapshot)
+            this.emitReplay(snapshot)
         }
         for (const data of held) {
-            this.emit(data)
+            this.emitLive(data)
         }
     }
 

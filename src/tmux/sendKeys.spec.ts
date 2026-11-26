@@ -5,7 +5,8 @@ import { dropTerminalReplies, encodeSendKeys, MAX_SEND_KEYS_COMMAND_BYTES } from
 const PANE = '%3'
 
 /**
- * Reverse of sendKeys.ts KEY_MAP (`\n` also maps to Enter; decoded as `\r`).
+ * Reverse of sendKeys.ts KEY_MAP. A bare `\n` is not in it: it goes out as
+ * `C-j` and decodes back to `\n`.
  * Arrows, Home and End decode to their normal-mode form; KEY_MAP also accepts
  * the application-cursor-mode form (`ESC O …`).
  */
@@ -103,9 +104,9 @@ describe('encodeSendKeys', () => {
             'send-keys -t %3 C-d',
             'send-keys -t %3 C-z',
         ])
-        // Bare \n is Enter too; other control characters become C-<letter>.
+        // Other control characters become C-<letter>, \n (Ctrl-J) included.
         expect(encodeSendKeys('\n\x01\x12', PANE)).toEqual([
-            'send-keys -t %3 Enter',
+            'send-keys -t %3 C-j',
             'send-keys -t %3 C-a',
             'send-keys -t %3 C-r',
         ])
@@ -121,6 +122,17 @@ describe('encodeSendKeys', () => {
         expect(decodeAll(ctrlBackslash)).toBe('\x1c\x1d\x1e\x1f\x00')
         // A lone ESC (no sequence after it) is the Escape key.
         expect(encodeSendKeys('\x1b', PANE)).toEqual(['send-keys -t %3 Escape'])
+    })
+
+    // trzsz replies with a line ending in \n, and the remote tsz/trz reads in
+    // raw mode until it sees one. Sent as Enter, tmux would write \r and the
+    // transfer would hang.
+    it('keeps the line feed at the end of a trzsz-style reply', () => {
+        const reply = '#ACT:eyJ0ZXN0IjoxfQ==\n'
+        const commands = encodeSendKeys(reply, PANE)
+        expect(commands[commands.length - 1]).toBe('send-keys -t %3 C-j')
+        expect(decodeAll(commands)).toBe(reply)
+        expect(decodeAll(commands)).not.toContain('\r')
     })
 
     it('sends each arrow key as one named key, even when several arrive together', () => {

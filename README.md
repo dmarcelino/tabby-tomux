@@ -52,6 +52,15 @@ Status: early development, tested against Tabby 1.0.238 and tmux 3.5a.
 
 When Tabby starts again, the main Tabby window's tomux tabs come back, each showing the same tmux window with its history. A tab connects when it is first shown, as Tabby's SSH tabs do. Windows that were closed in the meantime don't come back, and windows created in the meantime open as extra tabs. Tabby only restores tabs of its main window. Windows that belonged to tabs in other Tabby windows keep running and appear as extra tabs the next time their session connects.
 
+### File transfer with tabby-trzsz
+
+[tabby-trzsz](https://github.com/trzsz/tabby-trzsz) (`tsz` to download, `trz` to upload) is meant to work in tomux tabs. It needs `trzsz` installed on the host. Two things in tomux make this possible:
+
+- Input reaches the pane byte for byte. A line feed stays a line feed, so Ctrl-J reaches programs as Ctrl-J, as in an SSH tab, not as Enter.
+- History that tomux draws again (adopting a window, Reconnect, a pane switch) skips Tabby's session middleware, where tabby-trzsz watches the output, so an old transfer in the scrollback doesn't start again. A plugin that watches the tab's output some other way still sees that history.
+
+trzsz asks tmux whether it runs under a control-mode client such as tomux, and then uses base64 instead of its binary mode. tmux answers for one client of the session, so if the same session is also attached in another terminal, trzsz may decide it isn't under tomux, and the transfer may hang or happen in that other terminal. This case hasn't been tested. Uploads are typed into the pane through tmux's `send-keys`; their speed hasn't been measured yet. End-to-end checks in Tabby are recorded in `doc/TESTING.md`; until they are there, treat this as untested.
+
 ### Limitations
 
 - Splits are not supported: no tmux panes as Tabby splits.
