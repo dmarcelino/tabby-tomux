@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { connectIntent, decideBinding, describeIntent, unclaimedWindows } from './binding'
 import type { TmuxWindow } from './tmux/controlClient'
 
-const win = (id: string, index: number): TmuxWindow => ({ id, index, name: `w${index}`, paneId: `%${index}`, active: false, automaticRename: true })
+const win = (id: string, index: number, order: number | null = null): TmuxWindow => ({ id, index, name: `w${index}`, paneId: `%${index}`, active: false, automaticRename: true, order })
 const windows = [win('@3', 2), win('@1', 0), win('@2', 1)]
 const owned = (...ids: string[]) => (id: string) => ids.includes(id)
 
@@ -40,6 +40,20 @@ describe('decideBinding', () => {
     it('first new bind takes the lowest-numbered unclaimed window', () => {
         expect(decideBinding({ intent: { kind: 'new' }, windows, isOwned: owned('@1'), firstBind: true }))
             .toEqual({ action: 'bind', window: win('@2', 1) })
+    })
+
+    it('first new bind takes the first unclaimed window in recorded tab order', () => {
+        const ordered = [win('@1', 0, 2), win('@2', 1, 0), win('@3', 2, 1)]
+        expect(decideBinding({ intent: { kind: 'new' }, windows: ordered, isOwned: owned(), firstBind: true }))
+            .toEqual({ action: 'bind', window: win('@2', 1, 0) })
+        expect(decideBinding({ intent: { kind: 'new' }, windows: ordered, isOwned: owned('@2'), firstBind: true }))
+            .toEqual({ action: 'bind', window: win('@3', 2, 1) })
+    })
+
+    it('first new bind prefers a window with a recorded order over a lower-numbered one without', () => {
+        const mixed = [win('@1', 0), win('@2', 5, 0)]
+        expect(decideBinding({ intent: { kind: 'new' }, windows: mixed, isOwned: owned(), firstBind: true }))
+            .toEqual({ action: 'bind', window: win('@2', 5, 0) })
     })
 
     it('first new bind on a just-created session takes its only window', () => {
@@ -81,6 +95,11 @@ describe('connectIntent (Reconnect)', () => {
 describe('unclaimedWindows', () => {
     it('returns free windows in index order', () => {
         expect(unclaimedWindows(windows, owned('@2')).map(w => w.id)).toEqual(['@1', '@3'])
+    })
+
+    it('returns free windows in recorded tab order, unordered ones last', () => {
+        const ordered = [win('@1', 0, 1), win('@2', 1), win('@3', 2, 0), win('@4', 3, 2)]
+        expect(unclaimedWindows(ordered, owned('@4')).map(w => w.id)).toEqual(['@3', '@1', '@2'])
     })
 })
 

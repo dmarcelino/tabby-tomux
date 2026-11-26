@@ -16,7 +16,7 @@ export interface FakeTmuxOptions {
     versionError?: Error
     /** One reply per readTmuxVersion call, in order (an Error rejects); then `version`/`versionError`. */
     versionReplies?: Array<string | Error>
-    /** Windows reported by list-windows, as "@id|index|%pane|active|auto|name". */
+    /** Windows reported by list-windows, as "@id|index|%pane|active|auto|order|name". */
     windows?: string[]
     /** session_created / client_created seconds reported by display-message. */
     sessionCreated?: number
@@ -118,6 +118,8 @@ export class FakeTmux implements ControlTransport {
     openedSessions: string[] = []
     /** Per-command overrides, checked before the defaults. */
     readonly overrides = new Map<string, Reply>()
+    /** Window user options set with `set-option -w -t @id @name value`, by window id. */
+    readonly windowOptions = new Map<string, Map<string, string>>()
 
     /** This fake's own copy of opts.versionReplies, used up one per call. */
     private readonly versionReplies: Array<string | Error>
@@ -202,8 +204,24 @@ export class FakeTmux implements ControlTransport {
             const host = this.opts.host ?? 'testhost'
             return [`${host}|${this.opts.paneTitles?.[paneTitle[1]] ?? host}`]
         }
+        const setOption = /^set-option -w -t (@\d+) (@\S+) (.*)$/u.exec(command)
+        if (setOption) {
+            const [, windowId, name, value] = setOption
+            const options = this.windowOptions.get(windowId) ?? new Map<string, string>()
+            options.set(name, value)
+            this.windowOptions.set(windowId, options)
+            return []
+        }
         if (command.startsWith('list-windows')) {
-            return this.opts.windows ?? ['@0|0|%0|1|1|bash']
+            // The order field (the sixth) reports @tomux-order when it was set.
+            return (this.opts.windows ?? ['@0|0|%0|1|1||bash']).map(line => {
+                const parts = line.split('|')
+                const order = this.windowOptions.get(parts[0])?.get('@tomux-order')
+                if (order !== undefined && parts.length >= 7) {
+                    parts[5] = order
+                }
+                return parts.join('|')
+            })
         }
         return []
     }

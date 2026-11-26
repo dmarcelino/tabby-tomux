@@ -62,6 +62,12 @@ export interface TmuxWindow {
     active: boolean;
     /** From `#{automatic-rename}` — when true, tmux (not the user) owns the title. */
     automaticRename: boolean;
+    /**
+     * tomux: the window's `@tomux-order` user option, its tab position as last
+     * recorded by tomux (change restore-tab-order). Null when unset or not a
+     * non-negative integer (including on a tmux that cannot report it).
+     */
+    order: number | null;
 }
 
 export interface TmuxPaneCursor {
@@ -109,6 +115,9 @@ const DEFAULT_PING_MAX_WAIT_MS = 60_000;
 const READY_PROBE = '__tomux_ready__';
 /** Response line of the health-check ping. */
 const PING_PROBE = '__ping__';
+
+/** tomux: the window user option holding a window's recorded tab position (change restore-tab-order). */
+export const TOMUX_ORDER_OPTION = '@tomux-order';
 
 export class TmuxControlClient {
     private _version: TmuxVersion | null = null;
@@ -300,28 +309,30 @@ export class TmuxControlClient {
     }
 
     /**
-     * tomux: #{window_name} is the last field and everything after the fifth
+     * tomux: #{window_name} is the last field and everything after the sixth
      * '|' is the name, so a name containing '|' cannot shift the other fields
      * (the original put the name third).  An empty #{automatic-rename} (an old
      * tmux that does not know the option as a format) counts as on, as a
-     * missing field did in the original.
+     * missing field did in the original.  #{@tomux-order} is the tab order
+     * tomux recorded (see `parseWindowOrder`).
      */
     async listWindows(): Promise<TmuxWindow[]> {
         const res = await this.sendCommand(
-            'list-windows -F "#{window_id}|#{window_index}|#{pane_id}|#{window_active}|#{automatic-rename}|#{window_name}"',
+            `list-windows -F "#{window_id}|#{window_index}|#{pane_id}|#{window_active}|#{automatic-rename}|#{${TOMUX_ORDER_OPTION}}|#{window_name}"`,
         );
         return res
             .filter((l) => l.trim())
             .map((l) => {
                 const parts = l.split('|');
-                const [id, indexStr, paneId, active, autoField] = parts;
+                const [id, indexStr, paneId, active, autoField, orderField] = parts;
                 return {
                     id,
                     index: Number.parseInt(indexStr ?? '0', 10),
-                    name: parts.slice(5).join('|'),
+                    name: parts.slice(6).join('|'),
                     paneId,
                     active: active?.trim() === '1',
                     automaticRename: (autoField ?? '').trim() === '' ? true : tmuxAutomaticRenameIsOn(autoField),
+                    order: parseWindowOrder(orderField),
                 };
             })
             .filter((w) => Boolean(w.id?.startsWith('@')));
@@ -345,6 +356,15 @@ export class TmuxControlClient {
             ],
             CommandFlags.TolerateErrors,
         );
+    }
+
+    /**
+     * tomux: record `order` as the window's tab position in the window user
+     * option `@tomux-order` (change restore-tab-order).  Errors are tolerated:
+     * a tmux that refuses the option just keeps window-number order.
+     */
+    async setWindowOrder(windowId: string, order: number): Promise<void> {
+        await this.sendCommand(`set-option -w -t ${windowId} ${TOMUX_ORDER_OPTION} ${order}`, CommandFlags.TolerateErrors);
     }
 
     /** Make `windowId` tmux's current window. Errors are tolerated. */
@@ -521,6 +541,12 @@ function parseCursor(line: string | undefined): TmuxPaneCursor {
         x: Number.parseInt(xText ?? '0', 10) || 0,
         y: Number.parseInt(yText ?? '0', 10) || 0,
     };
+}
+
+/** tomux: a `#{@tomux-order}` value as a non-negative integer, or null (unset, garbage, or an old tmux). */
+export function parseWindowOrder(field: string | undefined): number | null {
+    const v = (field ?? '').trim();
+    return /^\d+$/u.test(v) ? Number.parseInt(v, 10) : null;
 }
 
 /** Interpret `#{automatic-rename}` / `list-windows` field (version-dependent values). */

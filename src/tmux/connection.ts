@@ -240,6 +240,11 @@ export class TomuxConnection {
         return this.owners.get(windowId)
     }
 
+    /** Every owned window with its owner (a snapshot), for recording the tab order. */
+    ownedWindows (): [string, object][] {
+        return [...this.owners]
+    }
+
     // -----------------------------------------------------------------------
     // Detach
     // -----------------------------------------------------------------------

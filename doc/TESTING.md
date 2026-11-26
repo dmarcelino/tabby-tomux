@@ -262,3 +262,9 @@ Tabby 1.0.238 on macOS. The test host runs Debian 13 with tmux 3.5a and is reach
 The wrapper and the `.bashrc` line that put it on `PATH` were removed afterwards.
 
 Not tested: an empty reply that occurs on its own (task 5.3 stays open), and a reply lost because the SSH session was destroyed during the check.
+
+## Tab order kept in tmux (change restore-tab-order, tasks 5.1–5.3), 2026-11-26
+
+2026-11-26: the user tested the branch of PR #14 by hand in Tabby and reported that it worked. The report did not name the Tabby or tmux version, or which of the checks in tasks 5.1 and 5.2 were run (the `@tomux-order` values after a drag and after a hotkey move, a restart with tab restore off, a window created while Tabby was closed, and a restart with restore on).
+
+Not checked: task 5.3, whether `set-option -w … @tomux-order` and `#{@tomux-order}` work on a tmux older than 3.6 (the only version checked, locally, while writing the change). So the README states no minimum tmux version for this feature.

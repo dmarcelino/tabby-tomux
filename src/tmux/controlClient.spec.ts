@@ -77,23 +77,23 @@ describe('TmuxControlClient operations', () => {
         const t = new FakeTmux().start()
         const p = t.client.listWindows()
         expect(t.commands).toEqual([
-            'list-windows -F "#{window_id}|#{window_index}|#{pane_id}|#{window_active}|#{automatic-rename}|#{window_name}"',
+            'list-windows -F "#{window_id}|#{window_index}|#{pane_id}|#{window_active}|#{automatic-rename}|#{@tomux-order}|#{window_name}"',
         ])
         t.respond([
-            '@0|0|%0|0|1|zsh',
-            '@3|1|%5|1|0|logs',
-            '@4|2|%6|0|on|vim',
+            '@0|0|%0|0|1|2|zsh',
+            '@3|1|%5|1|0||logs',
+            '@4|2|%6|0|on|0|vim',
             '',
             // An old tmux expands the unknown #{automatic-rename} to nothing:
             // the window is treated as auto-renamed.
-            '@7|3|%9|0||old',
+            '@7|3|%9|0|||old',
             'garbage line',
         ])
         await expect(p).resolves.toEqual([
-            { id: '@0', index: 0, name: 'zsh', paneId: '%0', active: false, automaticRename: true },
-            { id: '@3', index: 1, name: 'logs', paneId: '%5', active: true, automaticRename: false },
-            { id: '@4', index: 2, name: 'vim', paneId: '%6', active: false, automaticRename: true },
-            { id: '@7', index: 3, name: 'old', paneId: '%9', active: false, automaticRename: true },
+            { id: '@0', index: 0, name: 'zsh', paneId: '%0', active: false, automaticRename: true, order: 2 },
+            { id: '@3', index: 1, name: 'logs', paneId: '%5', active: true, automaticRename: false, order: null },
+            { id: '@4', index: 2, name: 'vim', paneId: '%6', active: false, automaticRename: true, order: 0 },
+            { id: '@7', index: 3, name: 'old', paneId: '%9', active: false, automaticRename: true, order: null },
         ])
     })
 
@@ -106,10 +106,27 @@ describe('TmuxControlClient operations', () => {
     ])('listWindows keeps the other fields intact for the window name %j', async (raw, name) => {
         const t = new FakeTmux().start()
         const p = t.client.listWindows()
-        t.respond([`@2|4|%8|1|0|${raw}`])
+        t.respond([`@2|4|%8|1|0|7|${raw}`])
         await expect(p).resolves.toEqual([
-            { id: '@2', index: 4, name, paneId: '%8', active: true, automaticRename: false },
+            { id: '@2', index: 4, name, paneId: '%8', active: true, automaticRename: false, order: 7 },
         ])
+    })
+
+    it.each([
+        ['', null],
+        ['  ', null],
+        ['abc', null],
+        ['-1', null],
+        ['1.5', null],
+        ['1e3', null],
+        ['0', 0],
+        ['12', 12],
+        [' 3 ', 3],
+    ])('listWindows reads the recorded order %j as %j', async (raw, order) => {
+        const t = new FakeTmux().start()
+        const p = t.client.listWindows()
+        t.respond([`@2|4|%8|1|0|${raw}|name`])
+        await expect(p).resolves.toEqual([expect.objectContaining({ id: '@2', order, name: 'name' })])
     })
 
     it('killWindow sends kill-window and rejects on %error by default', async () => {
@@ -143,6 +160,14 @@ describe('TmuxControlClient operations', () => {
         const p = t.client.selectWindow('@9')
         expect(t.commands).toEqual(['select-window -t @9'])
         t.fail("can't find window: @9")
+        await expect(p).resolves.toBeUndefined()
+    })
+
+    it('setWindowOrder sets the @tomux-order window option and tolerates errors', async () => {
+        const t = new FakeTmux().start()
+        const p = t.client.setWindowOrder('@4', 2)
+        expect(t.commands).toEqual(['set-option -w -t @4 @tomux-order 2'])
+        t.fail('invalid option: @tomux-order')
         await expect(p).resolves.toBeUndefined()
     })
 

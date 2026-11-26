@@ -105,6 +105,14 @@ describe('TomuxConnection.open', () => {
         })
     })
 
+    it('reads back the tab order it recorded (fake tmux round trip)', async () => {
+        const { conn } = await openFake({ windows: ['@0|0|%0|0|1||bash', '@3|1|%5|1|0|4|logs'] })
+        await conn.client.setWindowOrder('@0', 1)
+        await conn.client.setWindowOrder('@3', 0)
+        const windows = await conn.client.listWindows()
+        expect(windows.map(w => [w.id, w.order, w.name])).toEqual([['@0', 1, 'bash'], ['@3', 0, 'logs']])
+    })
+
     it('accepts tmux 2.1 and development builds without a number', async () => {
         await expect(openFake({ version: 'tmux 2.1' })).resolves.toBeDefined()
         await expect(openFake({ version: 'tmux master' })).resolves.toBeDefined()
@@ -117,7 +125,7 @@ describe('TomuxConnection.open', () => {
 
     it('attaches to an existing session and lists its windows', async () => {
         const { tmux, conn } = await openFake({
-            windows: ['@0|0|%0|0|1|bash', '@3|1|%5|1|0|logs'],
+            windows: ['@0|0|%0|0|1||bash', '@3|1|%5|1|0||logs'],
             sessionCreated: 1700000000,
             clientCreated: 1700005000,
         })
@@ -478,6 +486,19 @@ describe('TomuxConnection events and window ownership', () => {
         conn.release('@0', tabA)
         expect(conn.ownerOf('@0')).toBeUndefined()
         expect(conn.claim('@0', tabB)).toBe(true)
+    })
+
+    it('ownedWindows lists every owned window with its owner, as a snapshot', async () => {
+        const { conn } = await openFake()
+        const tabA = {}
+        const tabB = {}
+        conn.claim('@0', tabA)
+        conn.claim('@3', tabB)
+        const owned = conn.ownedWindows()
+        expect(owned).toEqual([['@0', tabA], ['@3', tabB]])
+        conn.release('@0', tabA)
+        expect(owned).toHaveLength(2)
+        expect(conn.ownedWindows()).toEqual([['@3', tabB]])
     })
 
     it('window-close clears ownership before listeners run', async () => {
