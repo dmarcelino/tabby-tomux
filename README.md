@@ -24,6 +24,7 @@ Status: early development, tested against Tabby 1.0.238 and tmux 3.5a.
 ## How it works
 
 - **One tab per tmux window, one pane per tab.** Each tomux tab shows one window of the tmux session. If a window has several tmux panes, the tab shows the active pane and the others keep running.
+  - A pane shorter than the tab is shown on the tab's top rows and scrolls within them, as it does in tmux; the rows below stay empty. When its height changes (a pane is closed or zoomed, the Tabby window is resized), the tab draws it again from tmux.
 - **Opening the profile:** if the session doesn't exist, tomux creates it and the tab shows its first window. If it exists, the tab shows the first window in your last tab order, and the session's other windows open as extra tabs in that order (by window number when tomux has no recorded order, for example for windows created while Tabby was closed). Once connected, opening the profile again creates a new window.
 - **Windows created elsewhere** (tmux's new-window key, another computer) open as new tabs.
 - **Colour and icon:** the extra tabs, and the tabs for windows created elsewhere, get the tomux profile's tab colour and icon, like the tab you opened. Until tmux reports the window's name, they show the profile's name. After a restart, each tab keeps the colour it had, including one you picked from the tab menu. A tab that an older tomux opened without a colour stays that way until you set one from the tab menu.
@@ -32,7 +33,7 @@ Status: early development, tested against Tabby 1.0.238 and tmux 3.5a.
   - A name you gave the window wins over the program's title. To make the tab follow the program again, rename it to `tmux:<index>`, in Tabby or in tmux.
   - If your shell sets the terminal title at every prompt (many bash and zsh setups do), unnamed tabs show that title, for example `user@host: ~/src`, instead of `tmux:<index>`. To keep `tmux:<index>`, turn on **Disable dynamic tab title** in the tomux profile.
   - After a reconnect, a restart or a pane switch, the tab shows the title tmux remembers for the active pane.
-- **Tabby's tab hotkeys** (next/previous tab, go to tab N, move tab) work as usual. Moving a tab doesn't reorder windows in tmux. Instead, tomux records each window's tab position in the tmux window option `@tomux-order` and uses it whenever it opens a session's tabs itself, for example with Tabby's tab restore turned off or on another computer. Only the main Tabby window records it.
+- **Tabby's tab hotkeys** (next/previous tab, go to tab N, move tab) work as usual. Moving a tab doesn't reorder windows in tmux. Instead, tomux records each window's tab position in the tmux window option `@tomux-order` and uses it whenever it opens a session's tabs itself, for example with Tabby's tab restore turned off or on another computer. Each Tabby window records the order of its own tabs whenever they change, including when a tab opens or closes. If two Tabby windows show the same session, the one that recorded last wins. That isn't always the one you reordered in: opening or closing a tmux window changes the tabs in both, and when Tabby starts, the main window records the order of the tabs it restored.
 - **Toolbar:** like an SSH tab, a tomux tab has Tabby's toolbar (hover the top of the tab, or pin it). It shows `user@host:port` and the tmux session name, and offers:
   - **SFTP:** opens Tabby's SFTP browser on the same SSH connection, starting in the folder the tab's shell is in (tmux reports it, so no shell setup is needed). The tab's context menu ("Open SFTP panel") and Tabby's SFTP hotkey open it too.
   - **Ports:** Tabby's port forwarding dialog. Forwards belong to the host's SSH connection, so every tab using that connection (all tomux tabs of the host, and SSH tabs sharing the connection) sees the same forwards, and they stay up while any of those tabs is connected. Forwards set in the SSH profile are active as well.
@@ -58,6 +59,7 @@ When Tabby starts again, the main Tabby window's tomux tabs come back, each show
 - Splits are not supported: no tmux panes as Tabby splits.
 - All tabs of one session share one tmux client size: the focused tab's size.
 - Opening the same session in two Tabby windows shows its windows in both.
+- When a tab is drawn again from tmux (after Tabby restarts, on Reconnect, or when the window's active pane changes), it takes the pane's screen, cursor visibility and mouse mode from tmux. Other terminal settings a running program turned on, such as bracketed paste, are missing until the program sets them again.
 
 ## Development
 

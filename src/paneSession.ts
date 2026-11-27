@@ -6,10 +6,13 @@
  */
 import { Logger } from 'tabby-core'
 import { BaseSession } from 'tabby-terminal'
-import { OutputGate } from './outputGate'
+import { GateEntry, GateSnapshot, OutputGate } from './outputGate'
+import { CLEAR_SCREEN, renderCapture } from './paneRedraw'
+import { needsRedraw, PaneRowsKeeper } from './paneRows'
 import { paneSwitchMarker } from './tabTitle'
 import type { TomuxConnection } from './tmux/connection'
-import { CommandFlags, TmuxPaneOutput } from './tmux/controlClient'
+import { CommandFlags, TmuxLayoutChange, TmuxPaneOutput } from './tmux/controlClient'
+import { PaneBorderStatus, paneCellInLayout, PaneRows, paneRows } from './tmux/layout'
 import { PaneOutputNormalizer } from './tmux/paneOutput'
 import { dropTerminalReplies, encodeSendKeys } from './tmux/sendKeys'
 
@@ -21,22 +24,39 @@ const MAX_BATCH_LINE = 8192
  * paste or never come on a stalled connection.
  */
 export const WORKING_DIRECTORY_TIMEOUT_MS = 1500
-/** SGR 0: default text style (no underline, bold, colours, ...). */
-const RESET_STYLE = '\x1b[0m'
-/**
- * Clear screen and scrollback, cursor home: the pane is drawn again from
- * scratch. The style is reset first, because earlier output may have left
- * one on and ESC[2J paints with the current background.
- */
-const CLEAR_SCREEN = RESET_STYLE + '\x1b[2J\x1b[3J\x1b[H'
+/** How long a new tab waits for tmux to report the pane border status before showing output. */
+export const BORDER_STATUS_TIMEOUT_MS = 1500
 
 export class TomuxPaneSession extends BaseSession {
     private normalizer = new PaneOutputNormalizer()
-    private gate = new OutputGate(text => this.emitText(text))
+    /** Keeps the tab scrolling within the pane's rows (change short-pane-scroll). */
+    private keeper = new PaneRowsKeeper()
+    private gate = new OutputGate(entry => this.emitEntry(entry))
+    /** The pane's rows as the tab shows them, in the order the gate passes them on; null when unknown. */
+    private shownRows: PaneRows | null = null
+    /** Read when the session starts; a layout's cells include the status line's row (see `paneRows`). */
+    private borderStatus: PaneBorderStatus = 'off'
     private listening = false
+    /**
+     * Number of the latest capture. Only the latest is drawn: a pane in the
+     * alternate screen takes two tmux lines to capture, so an earlier pane's
+     * capture can arrive after a later one's.
+     */
+    private captureNumber = 0
     private readonly onOutput = (out: TmuxPaneOutput): void => {
         if (out.paneId === this.paneIdValue) {
             this.gate.push(this.normalizer.normalize(out.data))
+        }
+    }
+    /**
+     * Follows the pane's rows. The visible layout shows a zoomed pane at the
+     * window's size; a layout without this pane (another window, another pane
+     * zoomed) says nothing about it.
+     */
+    private readonly onLayoutChange = (change: TmuxLayoutChange): void => {
+        const cell = paneCellInLayout(change.visibleLayout, Number(this.paneIdValue.slice(1)))
+        if (cell) {
+            this.gate.pushLayout(cell)
         }
     }
 
@@ -52,6 +72,7 @@ export class TomuxPaneSession extends BaseSession {
     ) {
         super(logger)
         this.connection.gateway.on('output', this.onOutput)
+        this.connection.gateway.on('layout-change', this.onLayoutChange)
         this.listening = true
     }
 
@@ -64,14 +85,22 @@ export class TomuxPaneSession extends BaseSession {
      * history and screen are shown first; output already contained in that
      * capture is dropped and newer output follows it (review item 13).
      * `redraw` (a reconnecting tab) clears the screen and scrollback first, so
-     * the history is not appended below what the tab already shows.
+     * the history is not appended below what the tab already shows. The
+     * window's pane border status is read before any output is shown, so
+     * held layout changes give the pane's rows right.
      */
     async start (options?: { adopt?: boolean, redraw?: boolean }): Promise<void> {
         this.open = true
+        const borderStatus = this.readBorderStatus()
         if (options?.adopt) {
-            const snapshot = await this.captureSnapshot(this.paneIdValue)
-            this.gate.open(snapshot !== null && options.redraw ? CLEAR_SCREEN + snapshot : snapshot)
+            const number = ++this.captureNumber
+            const [snapshot] = await Promise.all([this.captureSnapshot(this.paneIdValue, number), borderStatus])
+            if (number !== this.captureNumber) {
+                return
+            }
+            this.gate.open(snapshot !== null && options.redraw ? { ...snapshot, text: CLEAR_SCREEN + snapshot.text } : snapshot)
         } else {
+            await borderStatus
             this.gate.open()
         }
     }
@@ -81,12 +110,11 @@ export class TomuxPaneSession extends BaseSession {
      * The redraw starts with `paneSwitchMarker(paneId)`.
      */
     switchPane (paneId: string): void {
-        this.gate.hold()
         this.paneIdValue = paneId
-        void this.captureSnapshot(paneId).then(snap => {
-            // The marker tells the tab's title logic where the new pane's output starts.
-            this.gate.open(paneSwitchMarker(paneId) + CLEAR_SCREEN + (snap ?? ''))
-        })
+        // The marker tells the tab's title logic where the new pane's output starts.
+        const clear = paneSwitchMarker(paneId) + CLEAR_SCREEN
+        // Without a capture, the new pane's rows are unknown.
+        this.drawPaneAgain(clear, { text: clear, rows: null })
     }
 
     write (data: Buffer): void {
@@ -126,7 +154,13 @@ export class TomuxPaneSession extends BaseSession {
         flush()
     }
 
+    /**
+     * The terminal's resize gave the whole screen back as the scroll region:
+     * set the pane's again. The layout change tmux sends next brings the
+     * pane's new height.
+     */
     resize (columns: number, rows: number): void {
+        this.gate.pushReapply()
         this.onResize(columns, rows)
     }
 
@@ -174,33 +208,106 @@ export class TomuxPaneSession extends BaseSession {
         }
     }
 
+    /**
+     * Draws the pane again from a new capture, after `before`. Output is held
+     * meanwhile; output older than the capture is in it. Without a capture
+     * (it failed), only `withoutCapture` is written.
+     */
+    private drawPaneAgain (before: string, withoutCapture: GateSnapshot | null): void {
+        this.gate.hold()
+        const paneId = this.paneIdValue
+        const number = ++this.captureNumber
+        void this.captureSnapshot(paneId, number).then(snap => {
+            if (number !== this.captureNumber) {
+                return
+            }
+            this.gate.open(snap ? { ...snap, text: before + snap.text } : withoutCapture)
+        })
+    }
+
+    /**
+     * The window's `pane-border-status`, or 'off' when tmux doesn't answer in
+     * time. A change of the option later is not followed.
+     */
+    private async readBorderStatus (): Promise<void> {
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const timeout = new Promise<PaneBorderStatus>(resolve => {
+            timer = setTimeout(() => resolve('off'), BORDER_STATUS_TIMEOUT_MS)
+        })
+        const query = this.connection.client.paneBorderStatus(this.paneIdValue).catch(error => {
+            this.logger.debug('Could not read the pane border status:', error)
+            return 'off' as const
+        })
+        try {
+            this.borderStatus = await Promise.race([query, timeout])
+        } finally {
+            clearTimeout(timer)
+        }
+    }
+
     private stopListening (): void {
         if (this.listening) {
             this.listening = false
             this.connection.gateway.off('output', this.onOutput)
+            this.connection.gateway.off('layout-change', this.onLayoutChange)
         }
     }
 
     /**
-     * History + screen + cursor, captured atomically together (one tmux line).
-     * The text style is reset on both sides of the captured text.
-     * capture-pane -e assumes it starts from the default style, so a style
-     * left on by earlier output would colour its plain cells. It also never
-     * ends with a reset, so a capture whose last cell is styled would leave
-     * that style on for the program's next redraw. tmux can't report the
-     * program's current style; between screen updates it is the default.
+     * The pane's screens, cursor and modes, captured atomically, as terminal
+     * output (see `renderCapture`), and the pane's rows then. Capture
+     * number `number` drops held output only while it is still the latest
+     * capture: output held after a later capture began is newer than that
+     * capture.
      */
-    private async captureSnapshot (paneId: string): Promise<string | null> {
+    private async captureSnapshot (paneId: string, number: number): Promise<GateSnapshot | null> {
         try {
             const snap = await this.connection.client.captureWithCursor(paneId, {
-                onCaptureStart: () => this.gate.captureStarted(),
+                onCaptureStart: () => {
+                    if (number === this.captureNumber) {
+                        this.gate.captureStarted()
+                    }
+                },
             })
             this.logger.info(`Captured pane ${paneId}: pane ${snap.paneWidth}x${snap.paneHeight}, ` +
-                `cursor ${snap.cursorX},${snap.cursorY}, ${snap.text.split('\n').length} lines`)
-            return RESET_STYLE + snap.text.replace(/\n/g, '\r\n') + RESET_STYLE + `\x1b[${snap.cursorY + 1};${snap.cursorX + 1}H`
+                `cursor ${snap.cursorX},${snap.cursorY}, ${snap.text.split('\n').length} lines` +
+                (snap.alternate ? ', alternate screen' : ''))
+            return { text: renderCapture(snap), rows: { pane: snap.paneHeight, window: snap.windowHeight } }
         } catch (error) {
             this.logger.warn('Could not capture the pane:', error)
             return null
+        }
+    }
+
+    /**
+     * Writes what the gate passes on, through the pane rows keeper. When the
+     * pane's height changes, tmux moves its lines and cursor without any
+     * output, so a pane shorter than its window is drawn again (`needsRedraw`).
+     */
+    private emitEntry (entry: GateEntry): void {
+        switch (entry.kind) {
+            case 'text':
+                this.emitText(this.keeper.process(entry.text))
+                break
+            case 'redraw':
+                this.shownRows = entry.rows
+                this.keeper.discardHeld()
+                this.emitText(this.keeper.setHeight(entry.rows?.pane ?? 0))
+                this.emitText(this.keeper.process(entry.text))
+                break
+            case 'layout': {
+                const before = this.shownRows
+                const rows = paneRows(entry.cell, this.borderStatus)
+                this.shownRows = rows
+                this.emitText(this.keeper.setHeight(rows.pane))
+                if (needsRedraw(before, rows)) {
+                    this.drawPaneAgain(CLEAR_SCREEN, null)
+                }
+                break
+            }
+            case 'reapply':
+                this.emitText(this.keeper.reapply())
+                break
         }
     }
 

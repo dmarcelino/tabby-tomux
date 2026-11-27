@@ -59,7 +59,7 @@ When the program in the bound pane has switched the terminal to application curs
 - **THEN** the command line reads `XabcY`
 
 ### Requirement: Output and scrollback
-A tomux tab SHALL show the bound pane's output as it is produced. When a tab binds to a tmux window that already existed, it SHALL first show that pane's existing scrollback and screen and place the cursor where tmux has it.
+A tomux tab SHALL show the bound pane's output as it is produced. When a tab binds to a tmux window that already existed, it SHALL first show that pane's existing scrollback and screen and place the cursor where tmux has it. While the pane's program is in the alternate screen, the scrollback and the screen behind the program SHALL be on the tab's normal screen, behind the program's screen.
 
 #### Scenario: Adopting an existing window
 - **WHEN** a tomux tab binds to an existing window with 2,000 lines of history
@@ -88,6 +88,52 @@ When a tomux tab clears its screen to redraw a window or pane from a capture, th
 - **GIVEN** a tab whose last output switched underline and a colour on and never switched them off (the pane's output stopped partway through an update)
 - **WHEN** the window's active pane changes, or the tab reconnects and redraws its window
 - **THEN** the cleared screen has the default background, and the new capture's unstyled text is neither underlined nor coloured
+
+### Requirement: Redrawn tab keeps the program's alternate screen
+When a tomux tab draws a pane from tmux (adopting its window, reconnecting, or following a new active pane) and the pane's program is in the alternate screen, the tab SHALL show the program's screen on its own alternate screen. The shell's history and screen SHALL be on the tab's normal screen behind it, with the cursor where the program leaves it on exit. When the program leaves the alternate screen, the tab SHALL show the shell's screen and nothing of the program's.
+
+#### Scenario: Exiting Claude Code after Tabby restarts
+- **GIVEN** a tomux tab whose window runs Claude Code, started from a shell prompt
+- **WHEN** Tabby restarts, the tab is restored, and the user then exits Claude Code
+- **THEN** the tab shows the shell's history and screen as they were before Claude Code started, followed by what the shell prints after it exits, with no part of Claude Code's screen left on it
+
+#### Scenario: Restored tab while the program runs
+- **WHEN** Tabby restarts with a tomux tab open on a window running a full-screen program, and the tab is restored
+- **THEN** the tab shows the program's screen with the cursor where tmux has it, and scrolling up does not show the shell's history while the program runs
+
+#### Scenario: Program exits while the tab is disconnected
+- **GIVEN** a tomux tab showing a full-screen program
+- **WHEN** the connection drops, the program exits before the tab reconnects, and the tab then reconnects
+- **THEN** the tab shows the shell's history and screen, and the shell's later output, on its normal screen
+
+#### Scenario: Active pane changes from a full-screen program to a shell
+- **GIVEN** a tomux tab showing a pane that runs a full-screen program
+- **WHEN** the window's active pane changes to a pane running a shell
+- **THEN** the tab shows the shell pane's history and screen on its normal screen, and scrolling up shows that pane's history
+
+#### Scenario: Active pane changes twice in quick succession
+- **WHEN** the window's active pane changes from a shell pane to a pane running a full-screen program and, before the tab has redrawn it, to another shell pane
+- **THEN** the tab ends up showing the last pane only, and that pane's later output is not lost
+
+#### Scenario: Pane not in the alternate screen
+- **WHEN** a tomux tab adopts a window whose pane is not in the alternate screen
+- **THEN** the tab shows the pane's history and screen on its normal screen, as before this change
+
+### Requirement: Redrawn tab takes the pane's cursor visibility and mouse mode
+When a tomux tab draws a pane from tmux, the tab's cursor SHALL be shown or hidden as tmux reports it for the pane, and the tab's mouse reporting SHALL be the mode tmux reports for the pane, or off when tmux reports none. Settings a program left on in the tab SHALL NOT carry over to a pane that doesn't have them.
+
+#### Scenario: Restored tab of a program that hides the cursor
+- **WHEN** Tabby restarts with a tomux tab on a window running a full-screen program that hides the terminal cursor, and the tab is restored
+- **THEN** the tab doesn't show a terminal cursor over Claude Code's screen
+
+#### Scenario: Program with mouse reporting exits while the tab is disconnected
+- **GIVEN** a tomux tab showing vim with mouse reporting on
+- **WHEN** vim exits while the tab is disconnected, and the tab then reconnects
+- **THEN** the shell prompt shows the cursor, and scrolling the mouse wheel scrolls the tab instead of typing escape codes at the prompt
+
+#### Scenario: Restored tab of a program with mouse reporting
+- **WHEN** Tabby restarts with a tomux tab on a window running a program with mouse reporting on, and the tab is restored
+- **THEN** the program receives mouse clicks in the tab
 
 ### Requirement: Tab size drives the tmux window size
 tomux SHALL tell tmux the tab's size in columns and rows when the tab is created and whenever it changes, coalescing rapid changes, so that programs in the pane draw for the visible size.
@@ -240,3 +286,62 @@ tomux tabs SHALL behave as ordinary Tabby top-level tabs for Tabby's tab navigat
 #### Scenario: Reorder tabs
 - **WHEN** the user moves a tomux tab left
 - **THEN** the tab moves in Tabby's tab bar and the tmux window numbers are unchanged (the new order is recorded only in `@tomux-order`, see `tmux-tab-recovery`)
+
+### Requirement: A shorter pane scrolls within its rows
+When the pane a tomux tab shows is shorter than the tab, the tab SHALL show the pane on its top rows and scroll only those rows, as tmux scrolls the pane. A line that scrolls off the pane's top row SHALL go to the tab's scrollback. The tab's rows below the pane SHALL stay empty. A pane as tall as the tab SHALL behave as before.
+
+#### Scenario: New line on the pane's last row
+- **GIVEN** a tab shows an 11-row pane of a window with two panes, in a 25-row tab, and the shell's prompt is on the pane's last row
+- **WHEN** the user runs `echo one` and then `echo two`
+- **THEN** the tab's top 11 rows are the same as tmux's capture of the pane, the cursor is where tmux has it, and the tab's rows 12 to 25 are empty
+- **AND** the lines that scrolled off the pane's top row are in the tab's scrollback, in order
+
+#### Scenario: Pane border status line
+- **GIVEN** tmux draws a status line in the pane borders (`pane-border-status top` or `bottom`), and a tab shows a pane of a window with two panes
+- **WHEN** a command prints more lines than the pane has rows
+- **THEN** the tab scrolls within the pane's rows, without the status line's row, matching tmux's capture of the pane
+
+#### Scenario: Window with one pane
+- **WHEN** a tab shows a window with one pane and a command prints more lines than the tab has rows
+- **THEN** the tab scrolls at its last row and keeps every line in its scrollback, as before this change
+
+### Requirement: A shorter pane keeps its rows when programs and resizes reset them
+A tab showing a pane shorter than itself SHALL keep scrolling within the pane's rows after anything that would otherwise give the scrolling back to the whole tab: a program setting or resetting its own scroll region, a program entering or leaving the alternate screen, a terminal reset, and a resize of the tab. A program's own scroll region inside the pane SHALL still apply as the program set it.
+
+#### Scenario: Program resets its scroll region
+- **GIVEN** a tab shows an 11-row pane in a 25-row tab
+- **WHEN** a program in the pane sets a scroll region of rows 2 to 5, scrolls in it, then resets the scroll region and prints lines until the pane scrolls
+- **THEN** the region of rows 2 to 5 scrolls as the program set it, and after the reset the tab scrolls within the pane's 11 rows, matching tmux's capture of the pane
+
+#### Scenario: Full-screen program in a short pane
+- **GIVEN** a tab shows an 11-row pane in a 25-row tab
+- **WHEN** a program enters the alternate screen, prints more lines than the pane has rows, and exits
+- **THEN** while it runs and after it exits, the tab's top 11 rows and its cursor are the same as tmux's, and the rows below the pane are empty
+
+#### Scenario: Tab resized
+- **GIVEN** a tab shows a pane shorter than the tab
+- **WHEN** the user resizes the Tabby window and then a command prints more lines than the pane has rows
+- **THEN** the tab scrolls within the pane's rows at the pane's new height, matching tmux's capture of the pane
+
+### Requirement: A shorter pane's rows follow its height
+The rows a tab scrolls SHALL follow the shown pane's height in tmux: when the window's layout changes (a pane is added, closed, resized or zoomed) and when the window's active pane changes to a pane of another height. When the height of a pane shorter than its window changes, the tab SHALL show the pane's lines and cursor as tmux has them after the change, before the pane's next output.
+
+#### Scenario: Other pane closed
+- **GIVEN** a tab shows an 11-row pane of a window with two panes, in a 25-row tab
+- **WHEN** the other pane is closed in tmux, so the shown pane becomes 25 rows tall, and a command prints more lines than the tab has rows
+- **THEN** the tab scrolls at its last row, matching tmux's capture of the pane
+
+#### Scenario: Pane zoomed
+- **GIVEN** a tab shows an 11-row pane of a window with two panes
+- **WHEN** the pane is zoomed in tmux and a command prints more lines than the tab has rows
+- **THEN** the tab scrolls at its last row; when the pane is unzoomed, the tab's top rows and cursor are the same as tmux's capture of the pane, and new output scrolls within the pane's rows again
+
+#### Scenario: Tab made shorter
+- **GIVEN** a tab shows an 11-row pane of a window with two panes, with the cursor on the pane's last row
+- **WHEN** the user makes the Tabby window shorter, so the pane becomes 8 rows tall
+- **THEN** the tab's top 8 rows and its cursor are the same as tmux's capture of the pane, the rows below are empty, and new output scrolls within the 8 rows
+
+#### Scenario: Active pane changes to a pane of another height
+- **GIVEN** a window has a 7-row pane and a 17-row pane, and the tab shows the 7-row pane
+- **WHEN** the 17-row pane becomes active and a command in it prints more lines than it has rows
+- **THEN** the tab shows the 17-row pane on its top 17 rows and scrolls within them, matching tmux's capture of the pane

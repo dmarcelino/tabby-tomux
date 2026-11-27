@@ -7,7 +7,7 @@
  */
 import { Injectable, Injector, NgZone } from '@angular/core'
 import { debounceTime, interval, merge, Subject, Subscription } from 'rxjs'
-import { AppService, BaseTabComponent, BOOTSTRAP_DATA, BootstrapData, Logger, LogService, PartialProfile, ProfilesService, SplitTabComponent } from 'tabby-core'
+import { AppService, BaseTabComponent, Logger, LogService, PartialProfile, ProfilesService, SplitTabComponent } from 'tabby-core'
 import { BindIntent } from './binding'
 import { acquireTracked } from './acquire'
 import { planAdoption, Reservations } from './reservations'
@@ -72,7 +72,6 @@ export class TomuxService {
     private connections = new Set<TomuxConnection>()
     private orderHint = new Subject<void>()
     private orderSync: Subscription | null = null
-    private mainWindow: boolean | null = null
 
     /*
      * Tabby services are looked up lazily: ProfilesService and AppService
@@ -193,12 +192,14 @@ export class TomuxService {
     }
 
     /**
-     * Records the tab order in tmux while this is the main Tabby window and
-     * it has connections (design D5): after tab-bar changes and binds, and on
-     * a slow interval for the moves Tabby doesn't announce.
+     * Records the order of this Tabby window's tabs in tmux while it has
+     * connections (design D5): after tab-bar changes and binds, and on a slow
+     * interval for the moves Tabby doesn't announce. Runs in every Tabby
+     * window; when two show the same session, the last write wins (change
+     * record-order-other-windows).
      */
     private startOrderSync (): void {
-        if (this.orderSync || !this.isMainWindow()) {
+        if (this.orderSync) {
             return
         }
         const sync = new Subscription()
@@ -222,18 +223,6 @@ export class TomuxService {
     private stopOrderSync (): void {
         this.orderSync?.unsubscribe()
         this.orderSync = null
-    }
-
-    /** Only the main Tabby window records the order: its tabs are the ones Tabby restores. */
-    private isMainWindow (): boolean {
-        if (this.mainWindow === null) {
-            const data = this.injector.get<BootstrapData | null>(BOOTSTRAP_DATA as any, null)
-            if (!data) {
-                this.logger.warn('Tabby did not provide BOOTSTRAP_DATA: the tab order will not be recorded in tmux')
-            }
-            this.mainWindow = !!data?.isMainWindow
-        }
-        return this.mainWindow
     }
 
     /** Sends the `@tomux-order` values that differ from the tab bar. */
