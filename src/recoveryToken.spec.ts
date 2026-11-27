@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-only
 import { describe, expect, it } from 'vitest'
+import type { BindIntent } from './binding'
 import { intentFromToken, isTomuxToken, makeRecoveryToken } from './recoveryToken'
 
-const base = { tomuxProfileId: 'tomux:work', sessionName: 'main', windowId: '@4' }
+const base = {
+    tomuxProfileId: 'tomux:work',
+    sessionName: 'main',
+    windowId: '@4',
+    intent: { kind: 'adopt', windowId: '@4' } as BindIntent,
+}
 
 describe('recovery tokens', () => {
     it('duplicate / split (no includeState) -> no window id -> new window', () => {
@@ -23,9 +29,59 @@ describe('recovery tokens', () => {
         expect(intentFromToken(t)).toEqual({ kind: 'reopen', windowId: '@4' })
     })
 
-    it('a tab not yet bound to a window saves no window id', () => {
-        const t = makeRecoveryToken({ ...base, windowId: null, includeState: true, userClosed: false })
+    it('a tab for a new window not yet bound saves no window id', () => {
+        const t = makeRecoveryToken({ ...base, windowId: null, intent: { kind: 'new' }, includeState: true, userClosed: false })
+        expect(t.windowId).toBeUndefined()
         expect(intentFromToken(t)).toEqual({ kind: 'new' })
+    })
+
+    it('an unbound adopt tab saves its window and restores as adopt', () => {
+        const t = makeRecoveryToken({
+            ...base, windowId: null, intent: { kind: 'adopt', windowId: '@2' }, includeState: true, userClosed: false,
+        })
+        expect(t.windowId).toBe('@2')
+        expect(t.userClosed).toBeUndefined()
+        expect(intentFromToken(t)).toEqual({ kind: 'adopt', windowId: '@2' })
+    })
+
+    it('an unbound reopen tab saves its window and restores as adopt', () => {
+        const t = makeRecoveryToken({
+            ...base, windowId: null, intent: { kind: 'reopen', windowId: '@2' }, includeState: true, userClosed: false,
+        })
+        expect(t.windowId).toBe('@2')
+        expect(t.userClosed).toBeUndefined()
+        expect(intentFromToken(t)).toEqual({ kind: 'adopt', windowId: '@2' })
+    })
+
+    it('an unbound tab closed by the user restores as reopen of its window', () => {
+        const t = makeRecoveryToken({
+            ...base, windowId: null, intent: { kind: 'adopt', windowId: '@2' }, includeState: true, userClosed: true,
+        })
+        expect(t.userClosed).toBe(true)
+        expect(intentFromToken(t)).toEqual({ kind: 'reopen', windowId: '@2' })
+    })
+
+    it('a bound tab saves its bound window, not its intent window', () => {
+        const t = makeRecoveryToken({
+            ...base, windowId: '@9', intent: { kind: 'reopen', windowId: '@2' }, includeState: true, userClosed: false,
+        })
+        expect(t.windowId).toBe('@9')
+        expect(intentFromToken(t)).toEqual({ kind: 'adopt', windowId: '@9' })
+    })
+
+    it('without includeState saves no window whatever the intent', () => {
+        const intents: BindIntent[] = [
+            { kind: 'adopt', windowId: '@2' },
+            { kind: 'reopen', windowId: '@2' },
+            { kind: 'new' },
+        ]
+        for (const intent of intents) {
+            for (const windowId of ['@4', null]) {
+                const t = makeRecoveryToken({ ...base, windowId, intent, includeState: false, userClosed: true })
+                expect(t.windowId).toBeUndefined()
+                expect(t.userClosed).toBeUndefined()
+            }
+        }
     })
 
     it('never carries saved screen state', () => {

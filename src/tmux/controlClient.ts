@@ -88,13 +88,39 @@ export interface TmuxVersion {
 
 /** tomux: result of `captureWithCursor`. */
 export interface TmuxPaneCapture {
-    /** History and screen with escapes, lines joined with '\n' (as `capturePane`). */
+    /**
+     * History and screen with escapes, lines joined with '\n' (as
+     * `capturePane`). For a pane in the alternate screen, the history and the
+     * screen tmux keeps behind the program (the shell's screen).
+     */
     text: string;
+    /** The cursor (the program's cursor when the pane is in the alternate screen). */
     cursorX: number;
     cursorY: number;
     /** The pane's size when it was captured (0 when unknown). */
     paneWidth: number;
     paneHeight: number;
+    /** Present when the pane's program is in the alternate screen. */
+    alternate?: TmuxAlternateScreen;
+    /** Terminal modes tmux reports for the pane. */
+    modes: TmuxPaneModes;
+}
+
+/** tomux: the alternate screen of a pane, as captured. */
+export interface TmuxAlternateScreen {
+    /** The program's screen with escapes, lines joined with '\n'. */
+    text: string;
+    /** Where tmux puts the cursor when the program leaves the alternate screen; null when none was saved. */
+    savedCursor: TmuxPaneCursor | null;
+}
+
+/** tomux: cursor visibility and mouse reporting, as tmux reports them for a pane. */
+export interface TmuxPaneModes {
+    cursorVisible: boolean;
+    /** Mouse tracking mode (DECSET 1000, 1002 or 1003), or null when off. */
+    mouseMode: 1000 | 1002 | 1003 | null;
+    /** Mouse encoding (DECSET 1005 UTF-8 or 1006 SGR), or null for the default. */
+    mouseEncoding: 1005 | 1006 | null;
 }
 
 /** tomux: options for `ping`. */
@@ -428,39 +454,79 @@ export class TmuxControlClient {
 
     /**
      * tomux: capture a pane for adoption (history and screen with escapes,
-     * wrapped lines joined) together with its cursor position.  Both commands
-     * go out as one line, so tmux runs them back to back without processing
-     * pane output in between: the cursor belongs to the captured screen.
-     * `onCaptureStart` runs when the capture's %begin is parsed; any %output
-     * parsed after it is newer than the capture.
+     * wrapped lines joined) together with its cursor position and modes.
+     * The captures and the state query of one attempt go out as one line, so
+     * tmux runs them back to back without processing pane output in between:
+     * the state belongs to the captured screens. `onCaptureStart` runs when
+     * each line's first capture's %begin is parsed; any %output parsed after
+     * it is newer than the capture.
+     *
+     * A pane in the alternate screen takes a second line that captures the
+     * screen behind the program (`-a`), the history and the program's screen.
+     * If the program left the alternate screen in between, `-a` fails and the
+     * capture starts again; after `MAX_ALTERNATE_ATTEMPTS` failures a fresh
+     * first line is returned as a normal pane. The first line's capture is
+     * not reused, because the failed `-a`'s %begin already ran
+     * `onCaptureStart`.
      */
     async captureWithCursor(
         paneId: string,
         opts: { onCaptureStart?: () => void } = {},
     ): Promise<TmuxPaneCapture> {
-        const { onCaptureStart } = opts;
-        const [capture, cursor] = await this.sendCommandList(
+        for (let failures = 0; failures < MAX_ALTERNATE_ATTEMPTS; failures++) {
+            const first = await this.captureScreenLine(paneId, opts.onCaptureStart);
+            if (!first.alternateOn) {
+                return first.capture;
+            }
+            try {
+                return await this.captureBothScreensLine(paneId, opts.onCaptureStart);
+            } catch {
+                // The program left the alternate screen (or the pane is gone,
+                // which the next first line reports): start again.
+            }
+        }
+        return (await this.captureScreenLine(paneId, opts.onCaptureStart)).capture;
+    }
+
+    /** History and screen as one capture, with the pane's state. */
+    private async captureScreenLine(
+        paneId: string,
+        onCaptureStart: (() => void) | undefined,
+    ): Promise<{ capture: TmuxPaneCapture; alternateOn: boolean }> {
+        const [capture, stateReply] = await this.sendCommandList(
             [
                 `capture-pane -p -e -J -S - -t ${paneId}`,
-                `display-message -p -t ${paneId} "#{cursor_x} #{cursor_y} #{pane_width} #{pane_height}"`,
+                `display-message -p -t ${paneId} "${CAPTURE_STATE_FORMAT}"`,
             ],
             CommandFlags.None,
-            {
-                onBegin: (index) => {
-                    if (index === 0) {
-                        onCaptureStart?.();
-                    }
-                },
-            },
+            { onBegin: (index) => { if (index === 0) { onCaptureStart?.(); } } },
         );
-        const { x, y } = parseCursor(cursor[0]);
-        const [, , width, height] = (cursor[0] ?? '').trim().split(/\s+/u);
+        const state = parseCaptureState(stateReply[0]);
+        return { capture: { text: capture.join('\n'), ...state.capture }, alternateOn: state.alternateOn };
+    }
+
+    /** The screen behind the program, the history and the program's screen, with the pane's state. */
+    private async captureBothScreensLine(
+        paneId: string,
+        onCaptureStart: (() => void) | undefined,
+    ): Promise<TmuxPaneCapture> {
+        const [saved, history, screen, stateReply] = await this.sendCommandList(
+            [
+                `capture-pane -p -e -J -a -t ${paneId}`,
+                `capture-pane -p -e -J -S - -E -1 -t ${paneId}`,
+                `capture-pane -p -e -J -t ${paneId}`,
+                `display-message -p -t ${paneId} "${CAPTURE_STATE_FORMAT}"`,
+            ],
+            CommandFlags.None,
+            { onBegin: (index) => { if (index === 0) { onCaptureStart?.(); } } },
+        );
+        const state = parseCaptureState(stateReply[0]);
+        // With no history, tmux answers `-S - -E -1` with the first screen line.
+        const lines = state.historySize > 0 ? [...history, ...saved] : saved;
         return {
-            text: capture.join('\n'),
-            cursorX: x,
-            cursorY: y,
-            paneWidth: Number.parseInt(width ?? '0', 10) || 0,
-            paneHeight: Number.parseInt(height ?? '0', 10) || 0,
+            text: lines.join('\n'),
+            ...state.capture,
+            alternate: { text: screen.join('\n'), savedCursor: state.savedCursor },
         };
     }
 
@@ -532,6 +598,53 @@ export function versionAtLeast(version: TmuxVersion | null, major: number, minor
     if (!version) { return false; }
     return version.major > major ||
         (version.major === major && version.minor >= minor);
+}
+
+/**
+ * tomux: the pane state `captureWithCursor` reads with each capture. Fields
+ * are separated by '|' so an empty one (a format an old tmux doesn't know)
+ * keeps its place.
+ */
+const CAPTURE_STATE_FORMAT = [
+    'cursor_x', 'cursor_y', 'pane_width', 'pane_height',
+    'alternate_on', 'alternate_saved_x', 'alternate_saved_y', 'history_size',
+    'cursor_flag', 'mouse_standard_flag', 'mouse_button_flag', 'mouse_all_flag', 'mouse_sgr_flag', 'mouse_utf8_flag',
+].map(name => `#{${name}}`).join('|');
+
+/** tomux: second lines tried before a capture falls back to a normal pane. */
+const MAX_ALTERNATE_ATTEMPTS = 3;
+
+function parseCaptureState(line: string | undefined): {
+    capture: Omit<TmuxPaneCapture, 'text' | 'alternate'>;
+    alternateOn: boolean;
+    savedCursor: TmuxPaneCursor | null;
+    historySize: number;
+} {
+    const fields = (line ?? '').trim().split('|');
+    const num = (index: number): number => Number.parseInt(fields[index] ?? '', 10) || 0;
+    const flag = (index: number): boolean => fields[index] === '1';
+    const [paneWidth, paneHeight] = [num(2), num(3)];
+    const savedX = Number.parseInt(fields[5] ?? '', 10);
+    const savedY = Number.parseInt(fields[6] ?? '', 10);
+    // tmux reports UINT_MAX when no cursor was saved (the program used ?47h).
+    const savedInPane = savedX >= 0 && savedY >= 0 && savedX <= paneWidth && savedY < paneHeight;
+    return {
+        capture: {
+            cursorX: num(0),
+            cursorY: num(1),
+            paneWidth,
+            paneHeight,
+            modes: {
+                // An empty field (unknown format) counts as shown.
+                cursorVisible: fields[8] !== '0',
+                mouseMode: flag(11) ? 1003 : flag(10) ? 1002 : flag(9) ? 1000 : null,
+                mouseEncoding: flag(12) ? 1006 : flag(13) ? 1005 : null,
+            },
+        },
+        alternateOn: flag(4),
+        savedCursor: savedInPane ? { x: savedX, y: savedY } : null,
+        historySize: num(7),
+    };
 }
 
 /** "<x> <y>" from `display-message -p "#{cursor_x} #{cursor_y}"`; unparseable parts are 0. */

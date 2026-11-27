@@ -58,6 +58,7 @@ When Tabby starts again, the main Tabby window's tomux tabs come back, each show
 - Splits are not supported: no tmux panes as Tabby splits.
 - All tabs of one session share one tmux client size: the focused tab's size.
 - Opening the same session in two Tabby windows shows its windows in both.
+- When a tab is drawn again from tmux (after Tabby restarts, on Reconnect, or when the window's active pane changes), it takes the pane's screen, cursor visibility and mouse mode from tmux. Other terminal settings a running program turned on, such as bracketed paste, are missing until the program sets them again.
 
 ## Development
 
