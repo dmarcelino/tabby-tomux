@@ -362,3 +362,20 @@ Not checked: tmux older than 3.8, the Debian test host, mouse clicks reaching a 
 The user ran the change's scenarios in a running Tabby against a real tmux and reported them successful: restart twice without showing a restored tab, kill that tab's window while Tabby is closed, and close an unshown restored tab then reopen it. The details of that run (versions, host, window ids) were not recorded.
 
 Tabs saved by a build without this change have no window id in their token. They come back as new-window tabs once. To avoid that, show or close each restored tab once before quitting Tabby with the new build.
+
+## Tab order in a second Tabby window (change record-order-other-windows, task 4.2), 2026-11-27
+
+Setup: Tabby 1.0.238 on macOS, started with `TOMUX_DEV=1` and driven through its DevTools port, plugin linked to the change's branch (479 unit tests). `log.txt` showed `tomux plugin loaded`. The SSH host was the same Mac (`127.0.0.1:22`), with tmux 3.8 and a throwaway session `tomux-order` with windows `@152` (`one`, number 0), `@153` (`two`, 1) and `@154` (`three`, 2) and no `@tomux-order`. A tomux profile and an SSH profile for it were added for this run and removed afterwards. Second Tabby windows were opened with `HostAppService.newWindow()`, and reported `isMainWindow: false`. The profile was opened with `ProfilesService.openNewTabForProfile`, as the profile selector does. Tabs were moved with real mouse drags on the tab headers (DevTools mouse events). The main Tabby window also held restored tabs of another session that never connected. Every value was read on the host with `tmux list-windows -F '#{window_id} #{window_index} #{window_name} #{@tomux-order}'`.
+
+| Check | Result |
+|---|---|
+| Open the profile in a second Tabby window, main window has no tab for the session | Tabs `one`, `two`, `three`. `@tomux-order` became `0`, `1`, `2` right after adoption (before this change, a second window wrote nothing). |
+| Drag `three` to the far left in the second window | Within 1 s: `three`=0, `one`=1, `two`=2. Window numbers unchanged. |
+| Close the second Tabby window | All three windows kept, values unchanged, 0 clients. Nothing killed (no "Killing tmux window" line in `log.txt`). |
+| Open a new second Tabby window and open the profile there | Tabs came back as `three`, `one`, `two`, the dragged order. Values unchanged. |
+| Open the profile in the main window too | Tabs `three`, `one`, `two` there as well. 2 clients. |
+| Drag `two` to the far left in the second window, then wait 16 s | `two`=0, `three`=1, `one`=2 at 2 s and still at 16 s: the main window, whose tabs did not change, did not write over it. |
+| Then drag `one` in front of `three` in the main window (its last-written values were `three`=0, `one`=1, `two`=2) | `one`=0, `three`=1, `two`=2 at 2 s and at 16 s: the main window's whole order, no tie. Writing only the differences would have left `two` at the second window's 0, tied with `one`. |
+| Drag `one` to the far left in the second window (`one`=0, `two`=1, `three`=2), quit Tabby, start it again (tab restore on), show the restored `tomux-order` tab | The main window restored `one`, `three`, `two` and recorded that: `one`=0, `three`=1, `two`=2, replacing the second window's order, as the README and the spec scenario "Tabby restarts after a reorder in a second Tabby window" say. All three windows survived the quit. |
+
+Not checked: Tabby's move-tab hotkeys in a second window, a tmux window created or closed while two Tabby windows show the session (design D2, Risks), the Debian test host, and tmux older than 3.8.
