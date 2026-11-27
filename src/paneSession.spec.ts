@@ -22,7 +22,10 @@ const STATE = '#{cursor_x}|#{cursor_y}|#{pane_width}|#{pane_height}|#{alternate_
 const NORMAL_STATE = '2|1|80|24|0|4294967295|4294967295|1|1|0|0|0|0|0'
 const MOUSE_OFF = '\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l'
 const DEFAULT_MODES = '\x1b[?25h' + MOUSE_OFF
-const CLEAR = '\x1b[?1049l\x1b[0m\x1b[2J\x1b[3J\x1b[H'
+const CLEAR = '\x1b[?1049l\x1b[0m\x1b[2J\x1b[3J\x1b[H' + DEFAULT_MODES
+/** The redraw's text is written in a scroll region of the pane's 24 rows, then the full region again. */
+const PANE_REGION = '\x1b[1;24r'
+const FULL_REGION = '\x1b[r'
 const CWD_COMMAND = 'display-message -p -t %0 "#{pane_current_path}"'
 const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), log: vi.fn() }
 
@@ -95,7 +98,7 @@ describe('TomuxPaneSession start', () => {
         await session.start({ adopt: true })
         const text = session.emitted.join('')
         expect(text).toContain('history line\r\n$ prompt')
-        expect(text).toContain('$ prompt\x1b[0m\x1b[2;3H')
+        expect(text).toContain('$ prompt\x1b[0m' + FULL_REGION + '\x1b[2;3H')
         expect(text.startsWith('\x1b[2J')).toBe(false)
     })
 
@@ -113,7 +116,7 @@ describe('TomuxPaneSession start', () => {
     it('resets the text style after an adopted snapshot, before moving the cursor', async () => {
         const session = await sessionEndingStyled()
         await session.start({ adopt: true })
-        expect(session.emitted.join('')).toContain('next \x1b[4mlast\x1b[0m\x1b[2;3H')
+        expect(session.emitted.join('')).toContain('next \x1b[4mlast\x1b[0m' + FULL_REGION + '\x1b[2;3H')
     })
 
     it('resets the text style after the snapshot of a newly active pane', async () => {
@@ -121,7 +124,7 @@ describe('TomuxPaneSession start', () => {
         await session.start()
         session.switchPane('%0')
         await settle()
-        expect(session.emitted.join('')).toContain('next \x1b[4mlast\x1b[0m\x1b[2;3H')
+        expect(session.emitted.join('')).toContain('next \x1b[4mlast\x1b[0m' + FULL_REGION + '\x1b[2;3H')
     })
 
     it('starts a newly active pane\'s redraw from the default style, right after the marker', async () => {
@@ -129,7 +132,7 @@ describe('TomuxPaneSession start', () => {
         await session.start()
         session.switchPane('%0')
         await settle()
-        expect(session.emitted.join('')).toContain(paneSwitchMarker('%0') + CLEAR + '\x1b[0mhistory line')
+        expect(session.emitted.join('')).toContain(paneSwitchMarker('%0') + CLEAR + PANE_REGION + '\x1b[0mhistory line')
     })
 
     it('clears screen and scrollback before redrawing a reconnecting tab', async () => {
@@ -138,8 +141,8 @@ describe('TomuxPaneSession start', () => {
         const text = session.emitted.join('')
         // Reset first: earlier output may have left a style on, and ESC[2J
         // paints with the current background (design decision 1b).
-        expect(text.startsWith(CLEAR + '\x1b[0mhistory line')).toBe(true)
-        expect(text).toContain('$ prompt\x1b[0m\x1b[2;3H')
+        expect(text.startsWith(CLEAR + PANE_REGION + '\x1b[0mhistory line')).toBe(true)
+        expect(text).toContain('$ prompt\x1b[0m' + FULL_REGION + '\x1b[2;3H')
     })
     it('switches the tab to its normal screen before clearing it for a redraw, and only then', async () => {
         const session = await adoptedSession()
@@ -155,7 +158,7 @@ describe('TomuxPaneSession start', () => {
     it('sets the pane\'s cursor visibility and mouse mode after every redraw', async () => {
         const session = await adoptedSession()
         await session.start({ adopt: true })
-        expect(session.emitted.join('')).toContain('$ prompt\x1b[0m\x1b[2;3H' + DEFAULT_MODES)
+        expect(session.emitted.join('')).toContain('$ prompt\x1b[0m' + FULL_REGION + '\x1b[2;3H' + DEFAULT_MODES)
     })
 })
 
@@ -187,7 +190,7 @@ describe('TomuxPaneSession alternate screen', () => {
         const { session } = await twoPanes()
         await session.start({ adopt: true })
         expect(session.emitted.join('')).toBe(
-            '\x1b[0mhistory line\r\n$ shell\x1b[0m' +
+            PANE_REGION + '\x1b[0mhistory line\r\n$ shell\x1b[0m' + FULL_REGION +
             // The cursor the program's ESC[?1049l will restore, then the switch.
             '\x1b[4;3H\x1b[?1049h' +
             // The switch leaves the cursor where it was: the program's screen starts at the top.
@@ -199,7 +202,7 @@ describe('TomuxPaneSession alternate screen', () => {
     it('leaves the saved cursor alone when tmux saved none', async () => {
         const { session } = await twoPanes('4294967295|4294967295')
         await session.start({ adopt: true })
-        expect(session.emitted.join('')).toContain('$ shell\x1b[0m\x1b[?1049h\x1b[H\x1b[0mALT')
+        expect(session.emitted.join('')).toContain('$ shell\x1b[0m' + FULL_REGION + '\x1b[?1049h\x1b[H\x1b[0mALT')
     })
 
     it('draws only the last pane when the active pane changes again before a capture arrives', async () => {
@@ -219,6 +222,6 @@ describe('TomuxPaneSession alternate screen', () => {
         session.switchPane('%2')
         await settle()
         const text = session.emitted.join('')
-        expect(text).toBe(paneSwitchMarker('%2') + CLEAR + '\x1b[0mother pane\x1b[0m\x1b[2;3H' + DEFAULT_MODES + 'newer')
+        expect(text).toBe(paneSwitchMarker('%2') + CLEAR + PANE_REGION + '\x1b[0mother pane\x1b[0m' + FULL_REGION + '\x1b[2;3H' + DEFAULT_MODES + 'newer')
     })
 })
