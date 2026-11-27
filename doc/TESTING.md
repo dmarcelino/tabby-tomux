@@ -361,6 +361,19 @@ Not checked: tmux older than 3.8, the Debian test host, mouse clicks reaching a 
 
 The user ran the change's scenarios in a running Tabby against a real tmux and reported them successful: restart twice without showing a restored tab, kill that tab's window while Tabby is closed, and close an unshown restored tab then reopen it. The details of that run (versions, host, window ids) were not recorded.
 
+A second run, recorded here: Tabby 1.0.238 on macOS, started with `TOMUX_DEV=1` and driven through its DevTools port, plugin linked to the change's branch (481 unit tests). `log.txt` showed `tomux plugin loaded`. The SSH host was the same Mac (`127.0.0.1:22`) with tmux 3.8 and a throwaway session `tomux-unshown`, opened by a tomux profile added for this run and removed afterwards. The profile opened window `@146`, and `tmux new-window` from outside added `@147` (`second`), `@148` (`killme`) and `@149` (`closeme`). With the Welcome tab selected, Tabby was quit with `HostAppService.quit()`. Tabby selects the last restored tab, so `closeme` was shown at each start and the other tabs were not. User close was `AppService.closeTab(tab, true)` and reopen was `AppService.reopenLastTab()`, the calls Tabby's own close and reopen make. Saved tokens were read from Tabby's `tabsRecovery`, and each result was checked on the host with `tmux list-windows` and `tmux list-clients`.
+
+| Check | Result |
+|---|---|
+| Before the first quit | Four tabs bound to `@146` to `@149`. `tabsRecovery` had each window id |
+| First restart | Tabs back in order. Only `closeme` bound, the other three unbound with `adopt` intents. `tabsRecovery`, saved again by the new build, still had `@146`, `@147` and `@148` for the unbound tabs. 1 control client, same four windows |
+| Close the unshown `@146` tab, then reopen the last closed tab | The reopen-stack token had `windowId: @146` and `userClosed`. `@146` was not killed by the close. The reopened tab bound `@146`, at the end of the tab bar. No new window |
+| `tabsRecovery` before the second quit | `@147`, `@148`, `@149`, `@146`: `@147` and `@148` were never shown and still had their windows |
+| `@148` killed on the host while Tabby was closed, then the second restart | The `killme` tab closed itself (`log.txt`: "tmux window @148 no longer exists"). No new window |
+| After the second restart, `second` (never shown since the first quit) selected | Tabs `second`, `closeme`, `@146` in order, no extra tab. `second` bound `@147` and showed its shell. Windows `@146`, `@147`, `@149` only, 1 control client |
+
+Not checked in this run: tokens saved by a build without this change (the note below is from the code, not from a run), the Debian test host, tmux older than 3.8.
+
 Tabs saved by a build without this change have no window id in their token. They come back as new-window tabs once. To avoid that, show or close each restored tab once before quitting Tabby with the new build.
 
 ## Tab order in a second Tabby window (change record-order-other-windows, task 4.2), 2026-11-27
@@ -379,3 +392,41 @@ Setup: Tabby 1.0.238 on macOS, started with `TOMUX_DEV=1` and driven through its
 | Drag `one` to the far left in the second window (`one`=0, `two`=1, `three`=2), quit Tabby, start it again (tab restore on), show the restored `tomux-order` tab | The main window restored `one`, `three`, `two` and recorded that: `one`=0, `three`=1, `two`=2, replacing the second window's order, as the README and the spec scenario "Tabby restarts after a reorder in a second Tabby window" say. All three windows survived the quit. |
 
 Not checked: Tabby's move-tab hotkeys in a second window, a tmux window created or closed while two Tabby windows show the session (design D2, Risks), the Debian test host, and tmux older than 3.8.
+
+## Redraw of a pane shorter than the tab (code-review fixes to restore-alternate-screen), 2026-11-27
+
+Setup: Tabby 1.0.238 on macOS, started with `TOMUX_DEV=1` and driven through its DevTools port, plugin linked to a build with the fixes (484 unit tests). `log.txt` showed `tomux plugin loaded`. The SSH host was the same Mac (`127.0.0.1:22`) with tmux 3.8 and a throwaway session `tomux-redraw`, opened by a tomux profile added for this run and removed afterwards. The window was split in two, so the active pane had 11 rows in a 25-row tab, and `seq 1 300` gave it about 290 lines of history. The full-screen program was a small script (alternate screen, hidden cursor, mouse modes 1002 and 1006, any key exits and turns them off), run and exited with `tmux send-keys`. Each check compared the tab's xterm.js state (active buffer, every visible row, cursor, cursor visibility, mouse tracking mode) with `tmux capture-pane` and `display-message` of the active pane.
+
+| Check | Result |
+|---|---|
+| Profile opened on the split window | The pane's 11 rows on tab rows 0 to 10, identical to tmux's, and the rows below empty. Cursor as tmux's |
+| Program running in the short pane, Tabby quit and started again | Alternate screen, rows and cursor as tmux's, cursor hidden, mouse `drag` |
+| Then the program exited | Normal screen, cursor shown, mouse off. The saved cursor put the exit text on the pane's last row, as tmux did (the old code put it 13 rows higher, on a history line). Then the tab and the pane differ by one row: see the bug below |
+| Program running, the next capture made to fail (DevTools replaced `captureWithCursor` once with a rejected promise), active pane switched | The tab cleared, on the normal screen with the cursor shown and the mouse off. `log.txt`: "Could not capture the pane" |
+| Active pane switched back to the program | Alternate screen, rows and cursor as tmux's, cursor hidden, mouse `drag` |
+
+Bug found, already there before these fixes: when a pane shorter than the tab prints a newline on its last row, tmux scrolls the pane, but the tab moves its cursor to the row below the pane, so the tab and the pane drift apart by a row each time. Seen after the program's exit (one row) and after `echo live-one` (two more rows). The tab is right again after its next redraw.
+
+The same comparison against a real tmux, with `renderCapture` run in `@xterm/headless` instead of Tabby, showed the bug the fixes address before they were made: on the old code the pane's screen ended on tab rows 13 to 24 and the cursor was placed counting from row 0.
+
+## SSH toolbar Ports and Reconnect (change add-ssh-toolbar, task 4.2), 2026-11-27
+
+Setup as in the run above (same build, same Tabby, same host). An SSH profile for `127.0.0.1:22` with one forwarded port in its settings (local 18081 → 127.0.0.1:22) and a tomux profile on a throwaway session `tomux-toolbar` were added for this run and removed afterwards. Toolbar buttons were clicked in the page (`click()` inside Angular's zone). The Ports dialog was filled through its own fields and its "Forward port" button. Forwards were reached with a socket from the Mac, and nothing else listened on their ports. A tomux tab reads "On session end" and "Clear service messages on connect" from its SSH profile, so they were changed there, in Tabby's config, before opening a new tab.
+
+| Check | Result |
+|---|---|
+| Toolbar, connected | Green dot, `user@127.0.0.1:22` and `tomux-toolbar`, then Reconnect, SFTP, Ports and Unpin |
+| Profile forward | Listed in the Ports dialog ("profile forward"). Port 18081 answered with the host's SSH banner |
+| Local forward 18080 → 127.0.0.1:22 added in the dialog | Listed, and port 18080 answered with the host's SSH banner |
+| Ports in a second tab of the session (a window added with `tmux new-window`) | Its own dialog listed both forwards. Both tabs use the same SSH session |
+| Reconnect while connected | Same window, history shown once (each of 40 marked lines once), screen and cursor as tmux's. The other tab received all 15 lines a loop printed during the reconnect. Same tmux client (same pid), no windows added or removed |
+| "Clear service messages on connect" off, Reconnect | Each of 60 marked lines once, screen as tmux's |
+| Double-click on Reconnect (two clicks in one go) | One tmux client attached, history once |
+| Then every tab of the session closed (`AppService.closeTab` without the user flag, so the windows were kept) | The tmux client detached within the 3 s idle delay. The three windows were still there |
+| Control client killed with SIGKILL, pinned toolbar | Red dot and only Reconnect and Unpin, with no input after the kill. The tab printed "Lost the connection to tmux" |
+| Reconnect after the drop | Logged in again on a new tmux client and showed the same window, history once, screen as tmux's. No windows added |
+| Window killed on the host while disconnected, then Reconnect in its tab | The tab closed ("no longer exists"), no window created |
+| `bash` then `exit` typed in the tab (through xterm.js input, so Tabby counts it as an explicit exit), then Reconnect | The tab stayed and showed its window again |
+| SSH profile set to close on session end, new tab, Reconnect | The tab stayed, bound to its window |
+
+Not checked in this run: Windows, and Tabby's "Press any key to reconnect" path (Reconnect was always the toolbar button).

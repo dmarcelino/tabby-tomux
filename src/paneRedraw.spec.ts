@@ -112,6 +112,48 @@ describe('pane redraw in xterm.js', () => {
         expect(allLines(term).join('\n')).toContain('CLAUDE-3')
     })
 
+    it('pane shorter than the tab, history longer than the tab: the pane\'s screen on the top rows, history in the scrollback', async () => {
+        const history = Array.from({ length: 8 }, (_, i) => `old ${i + 1}`)
+        const shortPane: TmuxPaneCapture = {
+            text: [...history, '$ ls', 'file', '$ '].join('\n'), cursorX: 2, cursorY: 2, paneWidth: COLS, paneHeight: 3, modes: DEFAULT_MODES,
+        }
+        const term = await terminalAfter(renderCapture(shortPane))
+        expect(screen(term)).toEqual(['$ ls', 'file', '$ ', '', '', ''])
+        expect(term.buffer.active.cursorX).toBe(2)
+        expect(term.buffer.active.cursorY).toBe(2)
+        expect(allLines(term).slice(0, 11)).toEqual([...history, '$ ls', 'file', '$ '])
+        // The scroll region is the whole tab again for the pane's next output.
+        await new Promise<void>(resolve => term.write('\x1b[6;1Hbottom\r\nscrolled', resolve))
+        expect(screen(term)).toEqual(['file', '$ ', '', '', 'bottom', 'scrolled'])
+    })
+
+    it('pane shorter than the tab in the alternate screen: the program\'s exit restores the cursor on the shell\'s row', async () => {
+        const history = Array.from({ length: 8 }, (_, i) => `old ${i + 1}`)
+        const shortPane: TmuxPaneCapture = {
+            text: [...history, '$ ls', '$ claude', ''].join('\n'),
+            cursorX: 2,
+            cursorY: 1,
+            paneWidth: COLS,
+            paneHeight: 3,
+            alternate: { text: ['CLAUDE-1', '> type here', 'status'].join('\n'), savedCursor: { x: 0, y: 2 } },
+            modes: { cursorVisible: false, mouseMode: 1002, mouseEncoding: 1006 },
+        }
+        const running = await terminalAfter(renderCapture(shortPane))
+        expect(screen(running)).toEqual(['CLAUDE-1', '> type here', 'status', '', '', ''])
+        expect(running.buffer.active.cursorY).toBe(1)
+        const term = await terminalAfter(renderCapture(shortPane), CLAUDE_EXIT)
+        expect(screen(term)).toEqual(['$ ls', '$ claude', 'Resume this session', '$ ', '', ''])
+        expect(allLines(term).filter(l => l.startsWith('old'))).toEqual(history)
+    })
+
+    it('a clear with no capture after it (the capture failed): normal screen, cursor shown, mouse off', async () => {
+        const term = await terminalAfter(renderCapture(CLAUDE_RUNNING), CLEAR_SCREEN)
+        expect(term.buffer.active.type).toBe('normal')
+        expect(screen(term)).toEqual(['', '', '', '', '', ''])
+        expect(cursorHidden(term)).toBe(false)
+        expect(term.modes.mouseTrackingMode).toBe('none')
+    })
+
     it('modes: cursor and every mouse mode reset, then the pane\'s mode and encoding set', () => {
         expect(renderModes(DEFAULT_MODES)).toBe('\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l')
         expect(renderModes({ cursorVisible: false, mouseMode: 1000, mouseEncoding: 1005 }))
