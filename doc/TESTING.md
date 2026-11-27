@@ -453,3 +453,47 @@ Setup: Tabby 1.0.238 on macOS, started with `TOMUX_DEV=1` and driven through its
 | One-pane window without the status line, Tabby window resized twice, output after each | As tmux's, with no redraw |
 
 Not checked in this run: Windows, the Debian test host, tmux older than 3.8, dragging Tabby's window (several layout changes in a row), and a lone pane with `pane-border-status bottom`.
+
+## Branch integration (PRs #16, #18, #19 and #20 merged onto `main`), 2026-11-27
+
+Setup: Tabby 1.0.238 on macOS, started with `TOMUX_DEV=1` and driven through its DevTools port, plugin linked to the `integration` branch (553 unit tests). `log.txt` showed `tomux plugin loaded` at every start and no `warn` or `error` lines during the run. The SSH host was the same Mac (`127.0.0.1:22`) with tmux 3.8 and two throwaway sessions, `int-a` and `int-b`, each opened by a tomux profile added for this run and removed afterwards (`int-a` with colour `#cc0000` and icon `fas fa-server`, and set as the default profile). Screens were compared as in the earlier runs: the tab's xterm.js state (active buffer, rows, cursor, cursor visibility, mouse tracking mode, and where noted the whole buffer) against `tmux capture-pane` and `display-message` of the active pane. The full-screen program was the small script used before (alternate screen, hidden cursor, mouse modes 1002 and 1006, any key exits and undoes them). Tabby was quit with Electron's `app.quit()`, user close was `AppService.closeTab(tab, true)`, reopen was `AppService.reopenLastTab()`, and tab moves were `moveSelectedTabLeft` (the move-tab hotkey's call) or real mouse drags on the tab headers (DevTools mouse events).
+
+Behaviour already in `main`:
+
+| Check | Result |
+|---|---|
+| Open the profile on a session that does not exist | One window, bound to the one tab, with the profile's colour and icon. 1 control client |
+| Typing | `echo "a b  c é \$HOME-x"` arrived as typed. Screen and cursor as tmux's |
+| `tmux new-window` from outside, then the real `+` button | One tab each, both with the profile's colour and icon. `+` created one window |
+| Renames | tmux → tab title. Tab → tmux through the outer tab's `setCustomTitle`, and the custom title was cleared afterwards |
+| Tabby window resized (97x25 → 132x37) | Every window followed. tmux's current window followed the selected tab |
+| User close, then reopen | Only that window killed (logged). Reopen created a new window |
+| Quit and start again | Tabs back in order (including a move made before the quit), history once (whole buffer identical to tmux's). The window killed while Tabby was closed closed its tab ("no longer exists"), and the window created meanwhile opened as an extra tab. 1 client |
+| Control client killed with SIGKILL | "Lost the connection to tmux" and "Press any key to reconnect". The toolbar showed only Reconnect and Unpin. A key press reconnected the tab without typing the key. Whole buffer as tmux's |
+| Toolbar Reconnect while connected, then a double-click on it | Same tmux client, 1 client after the double-click, history once |
+| SFTP and Ports from the toolbar, after `cd /var/log` | The panel opened in `/private/var/log`. The Ports dialog opened |
+| Program titles (prompt title turned off) | `fix login bug` shown, then ignored once the window was named `api2`, shown again after renaming back to `tmux:5`, and `tmux:5` after an empty title |
+| Kitty graphics query after a title | tmux's pane title became the query, the tab kept `fix login bug` |
+| 30 MB of `yes` output | The tab matched tmux's screen when it ended, and another tab answered at once |
+| Underline left on by a restored screen (`ul` script on the bottom row, row 3 redrawn in yellow every second), restart | 0 of 12 cells of the redrawn line underlined, all yellow. The program's own underline on the bottom row kept |
+
+The fixes merged into `integration`:
+
+| Check | Result |
+|---|---|
+| #16: program on the alternate screen, restart | Alternate screen, cursor hidden, mouse `drag`, screen as tmux's. After it exited, normal screen with the whole buffer as tmux's and no program text |
+| #16: Reconnect while the program ran, then its exit | Alternate screen after Reconnect. After the exit, whole buffer as tmux's, no program text |
+| #16 and #19: split window, program in the 12-row pane: switch to the shell pane and back, then B→A→B in one tmux command | Each redraw from the tab's top row with the right buffer, cursor and mouse mode, rows below the pane empty. The quick switch ended on the shell pane |
+| #19: restart with three tabs not shown | Their tokens (`includeState`) and `tabsRecovery` kept `@166`, `@167` and `@169` |
+| #19: second restart with `unshown` still not shown | Its tab was still reserved for `@169`. No extra tab, no new window |
+| #19: user close of the unshown tab, then reopen | `@169` not killed. The reopened tab bound `@169` at the end of the tab bar |
+| #20: program in a 14-row pane, restart, exit, `seq` | Rows and cursor as tmux's, rows below empty, no drift |
+| #20: output after each of: Tabby window taller and shorter, zoom and unzoom, `resize-pane -y 6`, switch to the other pane and back, other pane closed, `split-window -d` | Rows and cursor as tmux's after every step |
+| #18: open `int-b` in a second Tabby window | `@tomux-order` written as `0`, `1`, `2` at once |
+| #18: move-tab hotkey, then a mouse drag, in the second window | Each new order written within 1.5 s |
+| #18: `int-b` also open in the main window, drag in the second window, wait 16 s | The main window did not write over it |
+| #18: drag in the main window | The main window's whole order written, still there 16 s later |
+| #18: close the second window | Nothing killed. 1 client left |
+| #18: new second window, drag there, quit, start, show the restored `int-b` tab | The main window restored its own order (`three`, `two`, `one`) and wrote it |
+
+Not checked in this run: Windows and Linux, the Debian test host, tmux older than 3.8, Claude Code itself (the script stood in for it), password login, Home and End keys, SFTP upload and download, forwarded ports set in the SSH profile, a failed capture, `pane-border-status`, Tabby's Switch profile, and laptop sleep.
