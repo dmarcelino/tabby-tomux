@@ -430,3 +430,26 @@ Setup as in the run above (same build, same Tabby, same host). An SSH profile fo
 | SSH profile set to close on session end, new tab, Reconnect | The tab stayed, bound to its window |
 
 Not checked in this run: Windows, and Tabby's "Press any key to reconnect" path (Reconnect was always the toolbar button).
+
+## A shorter pane scrolls within its rows (change short-pane-scroll, task 4.2), 2026-11-27
+
+Setup: Tabby 1.0.238 on macOS, started with `TOMUX_DEV=1` and driven through its DevTools port, plugin linked to the change's branch (550 unit tests). `log.txt` showed `tomux plugin loaded`. The SSH host was the same Mac (`127.0.0.1:22`) with tmux 3.8 and a throwaway session `tomux-short` (bash with prompt `$ `, about 300 lines of history), opened by a tomux profile added for this run and removed afterwards. The host key was accepted once per connection, after checking its fingerprint against the Mac's. Output came from `tmux send-keys` into the active pane. Layout changes came from tmux commands (`split-window -d`, `kill-pane`, `resize-pane`, `resize-pane -Z`, `select-pane`) and from resizing Tabby's window with Electron's `setSize`. Each check compared the tab's xterm.js state (active buffer, every row, cursor, last scrollback lines) with `tmux capture-pane` and `display-message` of the active pane. Redraws were counted from the "Captured pane" lines in `log.txt`.
+
+| Check | Result |
+|---|---|
+| Profile opened on a split window (pane 8 rows of 25) | Rows and cursor as tmux's, rows below the pane empty |
+| `echo one`, `echo two`, then `seq 1 40` on the pane's last row | Same, and the tab's scrollback ends as tmux's history. The drift recorded in "Redraw of a pane shorter than the tab" is gone |
+| A program sets rows 2 to 5 as its region, scrolls in it, resets it, then 5 lines | Rows and cursor as tmux's. The scrollback differs: tmux 3.8 puts lines scrolled out of a region below the top row into its history, xterm.js drops them. The same happens on a one-pane tmux window, so it is not about short panes |
+| A program on the alternate screen printing 20 lines, then its exit; `less` paged to its end, then quit | Alternate screen while running, normal screen after, rows and cursor as tmux's each time |
+| Tabby window taller (pane 8 → 15 rows of 38), then shorter (5 rows of 19), each followed by output | As tmux's. One redraw per resize |
+| Other pane closed (pane 25 rows of 25), then `seq 1 40` | As tmux's, scrolling at the tab's last row |
+| `split-window -d` (pane 25 → 12 rows, no pane switch), then output | As tmux's |
+| Zoom, `seq 1 40`, unzoom, `echo after-unzoom` | As tmux's at each step |
+| `resize-pane -y 6`, then output | As tmux's |
+| Active pane switched from a 7-row pane to a 17-row pane and back, output after each | As tmux's |
+| `pane-border-status top` on the window, tab opened after it was set: lone pane (31 rows in a 32-row window), `split-window -d` (top pane 15 rows), Tabby window shorter (11 rows of 25), output after each | As tmux's. No redraw for output, one per height change |
+| `pane-border-status top` set while the tab was open | The tab kept its earlier value: one row off from tmux until the tab was opened again, as the design says |
+| Next capture made to fail (DevTools replaced `captureWithCursor` once), then the active pane switched | The tab cleared (`log.txt`: "Could not capture the pane"). The next layout change (`resize-pane -y 9`) drew the new pane, and output then matched tmux's |
+| One-pane window without the status line, Tabby window resized twice, output after each | As tmux's, with no redraw |
+
+Not checked in this run: Windows, the Debian test host, tmux older than 3.8, dragging Tabby's window (several layout changes in a row), and a lone pane with `pane-border-status bottom`.

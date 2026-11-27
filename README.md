@@ -24,6 +24,7 @@ Status: early development, tested against Tabby 1.0.238 and tmux 3.5a.
 ## How it works
 
 - **One tab per tmux window, one pane per tab.** Each tomux tab shows one window of the tmux session. If a window has several tmux panes, the tab shows the active pane and the others keep running.
+  - A pane shorter than the tab is shown on the tab's top rows and scrolls within them, as it does in tmux; the rows below stay empty. When its height changes (a pane is closed or zoomed, the Tabby window is resized), the tab draws it again from tmux.
 - **Opening the profile:** if the session doesn't exist, tomux creates it and the tab shows its first window. If it exists, the tab shows the first window in your last tab order, and the session's other windows open as extra tabs in that order (by window number when tomux has no recorded order, for example for windows created while Tabby was closed). Once connected, opening the profile again creates a new window.
 - **Windows created elsewhere** (tmux's new-window key, another computer) open as new tabs.
 - **Colour and icon:** the extra tabs, and the tabs for windows created elsewhere, get the tomux profile's tab colour and icon, like the tab you opened. Until tmux reports the window's name, they show the profile's name. After a restart, each tab keeps the colour it had, including one you picked from the tab menu. A tab that an older tomux opened without a colour stays that way until you set one from the tab menu.

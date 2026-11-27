@@ -40,6 +40,7 @@
  */
 
 import { TmuxGateway, CommandFlags, SendCommandOptions, SendCommandListOptions } from './gateway';
+import type { PaneBorderStatus } from './layout';
 
 export type {
     TmuxPaneOutput,
@@ -100,6 +101,8 @@ export interface TmuxPaneCapture {
     /** The pane's size when it was captured (0 when unknown). */
     paneWidth: number;
     paneHeight: number;
+    /** tomux: the height of the pane's window when it was captured (0 when unknown). */
+    windowHeight: number;
     /** Present when the pane's program is in the alternate screen. */
     alternate?: TmuxAlternateScreen;
     /** Terminal modes tmux reports for the pane. */
@@ -554,6 +557,16 @@ export class TmuxControlClient {
     }
 
     /**
+     * tomux: where tmux draws the status line in the pane borders of
+     * `paneId`'s window (`pane-border-status`); 'off' for anything else.
+     */
+    async paneBorderStatus(paneId: string): Promise<PaneBorderStatus> {
+        const res = await this.sendCommand(`display-message -p -t ${paneId} "#{pane-border-status}"`);
+        const value = (res[0] ?? '').trim();
+        return value === 'top' || value === 'bottom' ? value : 'off';
+    }
+
+    /**
      * tomux: the title a program set for `paneId` (OSC 0/2, `#{pane_title}`)
      * and `#{host}`, which tmux uses as the title of a pane no program has
      * titled.  The title is the last field, so a '|' in it cannot shift the
@@ -609,6 +622,7 @@ const CAPTURE_STATE_FORMAT = [
     'cursor_x', 'cursor_y', 'pane_width', 'pane_height',
     'alternate_on', 'alternate_saved_x', 'alternate_saved_y', 'history_size',
     'cursor_flag', 'mouse_standard_flag', 'mouse_button_flag', 'mouse_all_flag', 'mouse_sgr_flag', 'mouse_utf8_flag',
+    'window_height',
 ].map(name => `#{${name}}`).join('|');
 
 /** tomux: second lines tried before a capture falls back to a normal pane. */
@@ -634,6 +648,7 @@ function parseCaptureState(line: string | undefined): {
             cursorY: num(1),
             paneWidth,
             paneHeight,
+            windowHeight: num(14),
             modes: {
                 // An empty field (unknown format) counts as shown.
                 cursorVisible: fields[8] !== '0',
