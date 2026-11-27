@@ -104,9 +104,11 @@ describe('planOrderWrites', () => {
             .toEqual([['@3', 0], ['@1', 1], ['@2', 2]])
     })
 
-    it('rewrites only the two swapped windows after a hotkey move', () => {
+    it('rewrites every window after a hotkey move, not only the two swapped ones', () => {
+        // @3 looks unchanged, but another Tabby window may have written @3=0
+        // since: sending only @2 and @1 would leave @2 and @3 both at 0.
         expect(planOrderWrites([t2, t1, t3], owned, recorded(['@1', 0], ['@2', 1], ['@3', 2])))
-            .toEqual([['@2', 0], ['@1', 1]])
+            .toEqual([['@2', 0], ['@1', 1], ['@3', 2]])
     })
 
     it('counts only this connection\'s tabs', () => {
@@ -116,7 +118,7 @@ describe('planOrderWrites', () => {
 
     it('closes the gap a closed tab left', () => {
         expect(planOrderWrites([t1, t3], [['@1', t1], ['@3', t3]], recorded(['@1', 0], ['@2', 1], ['@3', 2])))
-            .toEqual([['@3', 1]])
+            .toEqual([['@1', 0], ['@3', 1]])
     })
 
     it('keeps the position of a tab that has only reserved its window (not shown yet)', () => {

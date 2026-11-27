@@ -2,8 +2,9 @@
 /**
  * Tab order kept in tmux (change restore-tab-order, design D3-D5). Each
  * window's `@tomux-order` holds its tab's position among its session's tabs
- * in the main Tabby window; tabs tomux opens itself follow it. Pure, so every
- * rule is unit-tested; the service wires it to Tabby and tmux.
+ * in the Tabby window that last recorded it (change record-order-other-windows);
+ * tabs tomux opens itself follow it. Pure, so every rule is unit-tested; the
+ * service wires it to Tabby and tmux.
  */
 import type { TmuxWindow } from './tmux/controlClient'
 
@@ -63,7 +64,11 @@ export async function openInOrder<T> (
  * in tmux, as far as tomux knows. Each window of a tab in the bar gets that
  * tab's position among this connection's tabs (0 is leftmost); windows whose
  * tab is not in the bar (another Tabby window) are left alone. A window listed
- * twice counts once, with its first owner. Returns only the values that differ.
+ * twice counts once, with its first owner. Returns nothing when every value
+ * matches, and otherwise every window's value: `written` only knows this Tabby
+ * window's own writes, so a value it believes correct may have been changed by
+ * another Tabby window, and writing only the differences could leave a mix of
+ * both orders with ties (change record-order-other-windows, design D2).
  */
 export function planOrderWrites (
     barTabs: readonly object[],
@@ -89,11 +94,6 @@ export function planOrderWrites (
         }
     }
     inBar.sort((a, b) => a[1] - b[1])
-    const writes: [string, number][] = []
-    inBar.forEach(([windowId], order) => {
-        if (written.get(windowId) !== order) {
-            writes.push([windowId, order])
-        }
-    })
-    return writes
+    const writes = inBar.map(([windowId], order): [string, number] => [windowId, order])
+    return writes.some(([windowId, order]) => written.get(windowId) !== order) ? writes : []
 }

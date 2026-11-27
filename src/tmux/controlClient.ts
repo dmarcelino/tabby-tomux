@@ -600,7 +600,6 @@ export function versionAtLeast(version: TmuxVersion | null, major: number, minor
         (version.major === major && version.minor >= minor);
 }
 
-/** "<x> <y>" from `display-message -p "#{cursor_x} #{cursor_y}"`; unparseable parts are 0. */
 /**
  * tomux: the pane state `captureWithCursor` reads with each capture. Fields
  * are separated by '|' so an empty one (a format an old tmux doesn't know)
@@ -648,6 +647,7 @@ function parseCaptureState(line: string | undefined): {
     };
 }
 
+/** "<x> <y>" from `display-message -p "#{cursor_x} #{cursor_y}"`; unparseable parts are 0. */
 function parseCursor(line: string | undefined): TmuxPaneCursor {
     const [xText, yText] = (line ?? '').trim().split(/\s+/u);
     return {
