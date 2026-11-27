@@ -9,9 +9,10 @@ The main-window-only rule was there to keep two Tabby windows that show the same
 ## What Changes
 
 - Every Tabby window records `@tomux-order` for the tomux tabs in its own tab bar, not only the main Tabby window. The rules for what is written are unchanged: a window's position among its session's tomux tabs in that Tabby window, 0 for the leftmost, written only after adoption has opened the session's tabs, and only when the value differs.
-- When two Tabby windows show tabs for the same session, the last one to record wins, as already happens with Tabby on two computers. Each Tabby window only writes when its own tab order changes, so the two never overwrite each other in a loop.
+- When two Tabby windows show tabs for the same session, the last one to record wins, as already happens with Tabby on two computers. Each Tabby window only writes when its own tab order changes, so the two never overwrite each other in a loop. A Tabby window's tabs also change when a tmux window is created or closed elsewhere, and when Tabby restores the main window's tabs at startup, so the order that wins is not always the one the user set last.
+- When any of a session's values needs changing, a Tabby window writes the value of every window of that session whose tab it shows, not only the ones that differ from what it last wrote. Otherwise the values could mix two Tabby windows' orders.
 - tomux no longer reads Tabby's `BOOTSTRAP_DATA` (it was used only to tell the main window apart), and the warning logged when Tabby did not provide it goes away.
-- README: drop "Only the main Tabby window records it."
+- README: replace "Only the main Tabby window records it." with how the order is recorded across Tabby windows, including when it is not the order set last.
 
 Out of scope:
 - Detecting that another Tabby window or computer is attached to the same session and stopping writes then. Considered (tmux can count control-mode clients with `list-clients`) and rejected in favour of last-writer-wins, which is simpler to explain.
@@ -27,7 +28,7 @@ Out of scope:
 
 ## Impact
 
-- **Code**: `src/tomux.service.ts` (`startOrderSync` no longer checks the window; `isMainWindow`, the `mainWindow` field and the `BOOTSTRAP_DATA` import are removed). `src/tabOrder.ts` is unchanged: `planOrderWrites` already only considers tabs in the tab bar it is given.
+- **Code**: `src/tomux.service.ts` (`startOrderSync` no longer checks the window; `isMainWindow`, the `mainWindow` field and the `BOOTSTRAP_DATA` import are removed). `src/tabOrder.ts`: `planOrderWrites` returns the whole order of a connection when any value differs.
 - **Tests**: `src/tomux.service.spec.ts` builds the service with `isMainWindow: false` and a fake `AppService` without `tabs` or `tabsChanged$`; the sync now starts in every window, so the fake needs both. A new service test covers a second-window tab order being written.
 - **Tabby APIs**: one public token fewer (`BOOTSTRAP_DATA`). Nothing goes into `src/tabbyAdapter.ts`.
 - **Docs**: README (tab hotkeys line), `doc/TESTING.md` (manual check in a second Tabby window).
