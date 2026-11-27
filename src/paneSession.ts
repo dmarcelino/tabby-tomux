@@ -7,6 +7,7 @@
 import { Logger } from 'tabby-core'
 import { BaseSession } from 'tabby-terminal'
 import { OutputGate } from './outputGate'
+import { CLEAR_SCREEN, renderCapture } from './paneRedraw'
 import { paneSwitchMarker } from './tabTitle'
 import type { TomuxConnection } from './tmux/connection'
 import { CommandFlags, TmuxPaneOutput } from './tmux/controlClient'
@@ -21,19 +22,17 @@ const MAX_BATCH_LINE = 8192
  * paste or never come on a stalled connection.
  */
 export const WORKING_DIRECTORY_TIMEOUT_MS = 1500
-/** SGR 0: default text style (no underline, bold, colours, ...). */
-const RESET_STYLE = '\x1b[0m'
-/**
- * Clear screen and scrollback, cursor home: the pane is drawn again from
- * scratch. The style is reset first, because earlier output may have left
- * one on and ESC[2J paints with the current background.
- */
-const CLEAR_SCREEN = RESET_STYLE + '\x1b[2J\x1b[3J\x1b[H'
 
 export class TomuxPaneSession extends BaseSession {
     private normalizer = new PaneOutputNormalizer()
     private gate = new OutputGate(text => this.emitText(text))
     private listening = false
+    /**
+     * Number of the latest capture. Only the latest is drawn: a pane in the
+     * alternate screen takes two tmux lines to capture, so an earlier pane's
+     * capture can arrive after a later one's.
+     */
+    private captureNumber = 0
     private readonly onOutput = (out: TmuxPaneOutput): void => {
         if (out.paneId === this.paneIdValue) {
             this.gate.push(this.normalizer.normalize(out.data))
@@ -69,7 +68,11 @@ export class TomuxPaneSession extends BaseSession {
     async start (options?: { adopt?: boolean, redraw?: boolean }): Promise<void> {
         this.open = true
         if (options?.adopt) {
-            const snapshot = await this.captureSnapshot(this.paneIdValue)
+            const number = ++this.captureNumber
+            const snapshot = await this.captureSnapshot(this.paneIdValue, number)
+            if (number !== this.captureNumber) {
+                return
+            }
             this.gate.open(snapshot !== null && options.redraw ? CLEAR_SCREEN + snapshot : snapshot)
         } else {
             this.gate.open()
@@ -83,7 +86,11 @@ export class TomuxPaneSession extends BaseSession {
     switchPane (paneId: string): void {
         this.gate.hold()
         this.paneIdValue = paneId
-        void this.captureSnapshot(paneId).then(snap => {
+        const number = ++this.captureNumber
+        void this.captureSnapshot(paneId, number).then(snap => {
+            if (number !== this.captureNumber) {
+                return
+            }
             // The marker tells the tab's title logic where the new pane's output starts.
             this.gate.open(paneSwitchMarker(paneId) + CLEAR_SCREEN + (snap ?? ''))
         })
@@ -182,22 +189,24 @@ export class TomuxPaneSession extends BaseSession {
     }
 
     /**
-     * History + screen + cursor, captured atomically together (one tmux line).
-     * The text style is reset on both sides of the captured text.
-     * capture-pane -e assumes it starts from the default style, so a style
-     * left on by earlier output would colour its plain cells. It also never
-     * ends with a reset, so a capture whose last cell is styled would leave
-     * that style on for the program's next redraw. tmux can't report the
-     * program's current style; between screen updates it is the default.
+     * The pane's screens, cursor and modes, captured atomically, as terminal
+     * output (see `renderCapture`). Capture number `number` drops held output
+     * only while it is still the latest capture: output held after a later
+     * capture began is newer than that capture.
      */
-    private async captureSnapshot (paneId: string): Promise<string | null> {
+    private async captureSnapshot (paneId: string, number: number): Promise<string | null> {
         try {
             const snap = await this.connection.client.captureWithCursor(paneId, {
-                onCaptureStart: () => this.gate.captureStarted(),
+                onCaptureStart: () => {
+                    if (number === this.captureNumber) {
+                        this.gate.captureStarted()
+                    }
+                },
             })
             this.logger.info(`Captured pane ${paneId}: pane ${snap.paneWidth}x${snap.paneHeight}, ` +
-                `cursor ${snap.cursorX},${snap.cursorY}, ${snap.text.split('\n').length} lines`)
-            return RESET_STYLE + snap.text.replace(/\n/g, '\r\n') + RESET_STYLE + `\x1b[${snap.cursorY + 1};${snap.cursorX + 1}H`
+                `cursor ${snap.cursorX},${snap.cursorY}, ${snap.text.split('\n').length} lines` +
+                (snap.alternate ? ', alternate screen' : ''))
+            return renderCapture(snap)
         } catch (error) {
             this.logger.warn('Could not capture the pane:', error)
             return null

@@ -269,6 +269,29 @@ Not tested: an empty reply that occurs on its own (task 5.3 stays open), and a r
 
 Not checked: task 5.3, whether `set-option -w … @tomux-order` and `#{@tomux-order}` work on a tmux older than 3.6 (the only version checked, locally, while writing the change). So the README states no minimum tmux version for this feature.
 
+## Alternate screen after a redraw (change restore-alternate-screen, task 4.3), 2026-11-26
+
+Before the change, the user reproduced the bug by hand in Tabby: Claude Code started and exited normally came out clean, and so did Reconnect while it ran, but exiting it after a Tabby restart left its screen behind, with the shell's output printed over it from the top-left corner.
+
+Setup: Tabby 1.0.238 on macOS, started with `TOMUX_DEV=1` and driven through its DevTools port, plugin linked to the change's branch (455 unit tests). The SSH host was the same Mac (`127.0.0.1:22`), with tmux 3.8 and a throwaway session `tomux-alt`; the usual Debian test host was not reachable. Each check read the tab's xterm.js state (active buffer, cursor, cursor visibility, mouse tracking mode, every buffer line) and compared the visible screen line by line with `tmux capture-pane -p` of the pane. Full-screen programs: Claude Code 2.1.332 (alternate screen, mouse tracking on, cursor shown), and a small script that enters the alternate screen, hides the cursor and turns on mouse modes 1002 and 1006, and turns all of that off again on exit. Programs were exited with `tmux send-keys`.
+
+| Check | Result |
+|---|---|
+| Claude Code running, Tabby quit and started again | Tab restored on the alternate screen, screen as tmux's, cursor where tmux has it, mouse tracking `any`. Log: `Captured pane …, alternate screen` |
+| Then Claude Code exited | Normal screen, identical to tmux's: the history (`old line 1`…`50`, each once) and the prompt on the row tmux restored. No Claude Code text anywhere in the buffer. Cursor shown, mouse off |
+| Script running (cursor hidden, mouse 1002/1006), Tabby restarted | Alternate screen, cursor hidden, mouse `drag`, screen as tmux's |
+| Then the script exited | Normal screen as tmux's, cursor shown, mouse off |
+| Reconnect while the script ran, then the script exited | Alternate screen with cursor hidden and mouse `drag` after Reconnect; after the exit, normal screen as tmux's with no script text in the buffer |
+| Connection dropped (tmux control client killed with SIGKILL, so no `%exit`), script exited, then Reconnect | Normal screen as tmux's, history once, no script text, cursor shown, mouse off |
+| Same with SIGTERM | tmux sends `%exit`, which tomux treats as the session ending: the tab closes (existing behaviour, not part of this change) |
+| Second pane in the window, active pane changed script → shell → script, then B→A→B in one tmux command | Each redraw on the right screen with the right cursor visibility and mouse mode; the quick switch ended on the shell pane. Screen as tmux's each time |
+| Plain shell pane, Tabby restarted | Normal screen as tmux's, cursor shown, mouse off |
+| Claude Code running, Tabby quit, its window made smaller (120x33 → 97x25), started again | tmux resized to 97x25 before the capture; screen as tmux's on the alternate screen; after Claude Code exited, normal screen as tmux's with no Claude Code text |
+
+Found and fixed during this run: switching back to the script's pane drew its screen from the row of the shell's saved cursor instead of the top, because `ESC[?1049h` clears the alternate screen without moving the cursor. Claude Code's restore had looked right only because the shell's cursor was on the last row and Claude Code's screen fills every row. The redraw now moves the cursor home after the switch (unit test in `src/paneRedraw.spec.ts`), and the pane-switch checks above were run again on the fixed build.
+
+Not checked: tmux older than 3.8 (the formats and `capture-pane -a` on tmux 2.1), the Debian test host, and mouse input reaching the program (only the tab's mouse mode was read, no clicks were sent).
+
 ## Profile colour on adopted tabs (change adopted-tab-profile-look, task 3.1), 2026-11-26
 
 Setup: Tabby 1.0.238 on macOS, test host Debian 13 with tmux 3.5a reached through a local port forward. Tabby was started with `TOMUX_DEV=1` and driven through its DevTools port, with the plugin linked to the change's branch. `log.txt` showed `tomux plugin loaded`. Two tomux profiles were added for this run and removed afterwards: `tomux-color` (colour `#cc0000`, icon `fas fa-server`) and `tomux-nocolor` (neither), each on its own new session with two windows. Profiles were opened with `ProfilesService.openNewTabForProfile`, as the profile selector does. Every `AppService.openNewTab` call was recorded. The title a tab was opened with, below, is the `title` input of that call, not read from the tab header. Each check also read the tab header's colour bar, and the host's `tmux list-windows` and `tmux list-clients`.
@@ -295,3 +318,47 @@ Same setup and profiles. `tomux-color`'s session had four windows this time. The
 | `tmux new-window` in that session | One new tab for `@35`, red, with the icon, opened with the title `tomux-color`, then `tmux:4`. |
 | Open `tomux-nocolor` on its session with windows `@29` and `@30` | Neither tab has a colour, an icon or a header bar. 2 windows, 1 client. |
 | Set the `@32` tab to `#00aa00` as in the first run, quit with the Quit command and start again | `@32` came back green, `@31` and `@33` to `@35` red with the icon, and the `tomux-nocolor` tabs without a colour. All seven windows were still on the host after the quit. |
+
+## Branch claude-exit after merging main, 2026-11-26
+
+Setup: Tabby 1.0.238 on macOS, started with `TOMUX_DEV=1` and driven through its DevTools port, plugin linked to the branch at c56030a (`main` merged into the restore-alternate-screen change, 476 unit tests). `log.txt` showed `tomux plugin loaded`. The Debian test host was not reachable, so the SSH host was the same Mac (`127.0.0.1:22`) with tmux 3.8 and a throwaway session `tomux-merge`, opened by a tomux profile added for this run and removed afterwards. Screens were compared as in the alternate-screen run: the tab's xterm.js state (active buffer, cursor, cursor visibility, mouse tracking mode, every line) against `tmux capture-pane` and `display-message` of the pane, and where noted the whole scrollback against `capture-pane -S -`. Full-screen programs: Claude Code 2.1.332 and the same small script (alternate screen, hidden cursor, mouse modes 1002 and 1006), both exited with `tmux send-keys`.
+
+General checks:
+
+| Check | Result |
+|---|---|
+| Open the profile on a session that does not exist | Session created with one window, bound to the one tab. 1 control client |
+| Typing | `echo "a b  c é \$HOME-x"` arrived as typed. Screen and cursor identical to tmux's |
+| `tmux new-window` from outside, then the real `+` button | One tab each. `+` created one window and selected it |
+| Renames | tmux → tab title. Tab → tmux through `setCustomTitle`, and the custom title was cleared afterwards |
+| Tabby window resized (120x33 → 97x25) | Every window followed. tmux's current window followed the selected tab |
+| User close of a tab | Only that window killed |
+| Quit and start again, every tab shown before the quit | Tabs back in order, each showing its window's history once (whole scrollback identical to tmux's). 1 client |
+| Window killed and window created while Tabby was closed | The killed one did not come back. The new one opened as an extra tab |
+| Control client killed with SIGKILL | Each tab printed "Lost the connection to tmux" and "Press any key to reconnect". A key press reconnected that tab without sending the key to the shell. Each tab reconnects on its own |
+| Profile given a colour and an icon, then `tmux new-window` | The new adopted tab had the colour and the icon |
+
+Alternate screen (the scenarios of task 4.3, run again on the merged build):
+
+| Check | Result |
+|---|---|
+| Claude Code running, Tabby quit and started again | Alternate screen, cursor shown, mouse `any`, screen as tmux's |
+| Then Claude Code exited | Normal screen, whole scrollback identical to tmux's, cursor shown, mouse off |
+| Script running, Tabby restarted, then the script exited | Alternate screen with cursor hidden and mouse `drag`, then normal screen as tmux's with no script text |
+| Plain shell tab after the restart | Normal screen and whole scrollback as tmux's, history once |
+| Reconnect while the script ran, then the script exited | Alternate screen with cursor hidden and mouse `drag` after Reconnect. Normal screen as tmux's after the exit |
+| Control client killed with SIGKILL, script exited, then a key press to reconnect | Normal screen as tmux's, no script text, cursor shown, mouse off. Wheel events scrolled Tabby's scrollback (viewport row 19 → 0) and tmux did not enter copy mode |
+| Second pane, active pane script → shell → script, then B→A→B in one tmux command | Each redraw on the right screen from the top row, with the right cursor visibility and mouse mode. The pane's rows were identical to tmux's, and the tab rows below the smaller pane were empty. The quick switch ended on the shell pane |
+| Claude Code running, Tabby quit, tmux window set to 120x33 by another control client, Tabby started at 92x25 | tmux sized to 92x25 before the capture, alternate screen as tmux's. After Claude Code exited, normal screen and whole scrollback as tmux's, with no Claude Code text |
+
+Bug found, already in the code before this branch (`getRecoveryToken` in `src/components/tomuxTab.component.ts` is unchanged since the first commit): a restored tab that is never shown before Tabby quits again loses its window. Its recovery token is saved without `windowId` (the tab's `windowId` is still null, so the window in its adopt intent is not used). On the next start the restored tab gets a `new` intent, its window opens again as an extra tab, and showing the restored tab creates a new tmux window. Seen with two windows, and confirmed in Tabby's saved `tabsRecovery`.
+
+Setup mistake, not a tomux problem: a first try at the different-size restore set the size with `tmux resize-window`, which sets the window's `window-size` to `manual`, so tmux ignored the client size tomux asked for.
+
+Not checked: tmux older than 3.8, the Debian test host, mouse clicks reaching a program, the empty `tmux -V` retry (the version was read on the first try).
+
+## Restored tab keeps its window until shown (change keep-unshown-tab-window, task 2.2), 2026-11-26
+
+The user ran the change's scenarios in a running Tabby against a real tmux and reported them successful: restart twice without showing a restored tab, kill that tab's window while Tabby is closed, and close an unshown restored tab then reopen it. The details of that run (versions, host, window ids) were not recorded.
+
+Tabs saved by a build without this change have no window id in their token. They come back as new-window tabs once. To avoid that, show or close each restored tab once before quitting Tabby with the new build.
