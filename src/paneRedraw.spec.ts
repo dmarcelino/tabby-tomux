@@ -23,6 +23,7 @@ const CLAUDE_RUNNING: TmuxPaneCapture = {
     cursorY: 4,
     paneWidth: COLS,
     paneHeight: ROWS,
+    windowHeight: ROWS,
     alternate: { text: ['CLAUDE-1', 'CLAUDE-2', 'CLAUDE-3', '', '> type here', 'status'].join('\n'), savedCursor: { x: 0, y: 5 } },
     modes: { cursorVisible: false, mouseMode: 1002, mouseEncoding: 1006 },
 }
@@ -88,7 +89,7 @@ describe('pane redraw in xterm.js', () => {
         // The tab still shows the program on its alternate screen, with its modes.
         const before = renderCapture(CLAUDE_RUNNING)
         const shellNow: TmuxPaneCapture = {
-            text: SHELL + 'Resume this session\n$ ', cursorX: 2, cursorY: 5, paneWidth: COLS, paneHeight: ROWS, modes: DEFAULT_MODES,
+            text: SHELL + 'Resume this session\n$ ', cursorX: 2, cursorY: 5, paneWidth: COLS, paneHeight: ROWS, windowHeight: ROWS, modes: DEFAULT_MODES,
         }
         const term = await terminalAfter(before, CLEAR_SCREEN + renderCapture(shellNow))
         expect(term.buffer.active.type).toBe('normal')
@@ -115,16 +116,18 @@ describe('pane redraw in xterm.js', () => {
     it('pane shorter than the tab, history longer than the tab: the pane\'s screen on the top rows, history in the scrollback', async () => {
         const history = Array.from({ length: 8 }, (_, i) => `old ${i + 1}`)
         const shortPane: TmuxPaneCapture = {
-            text: [...history, '$ ls', 'file', '$ '].join('\n'), cursorX: 2, cursorY: 2, paneWidth: COLS, paneHeight: 3, modes: DEFAULT_MODES,
+            text: [...history, '$ ls', 'file', '$ '].join('\n'), cursorX: 2, cursorY: 2, paneWidth: COLS, paneHeight: 3, windowHeight: ROWS, modes: DEFAULT_MODES,
         }
         const term = await terminalAfter(renderCapture(shortPane))
         expect(screen(term)).toEqual(['$ ls', 'file', '$ ', '', '', ''])
         expect(term.buffer.active.cursorX).toBe(2)
         expect(term.buffer.active.cursorY).toBe(2)
         expect(allLines(term).slice(0, 11)).toEqual([...history, '$ ls', 'file', '$ '])
-        // The scroll region is the whole tab again for the pane's next output.
-        await new Promise<void>(resolve => term.write('\x1b[6;1Hbottom\r\nscrolled', resolve))
-        expect(screen(term)).toEqual(['file', '$ ', '', '', 'bottom', 'scrolled'])
+        // The region stays at the pane's rows: the pane's next line on its
+        // last row scrolls them, as tmux scrolls the pane.
+        await new Promise<void>(resolve => term.write('\r\nnext', resolve))
+        expect(screen(term)).toEqual(['file', '$ ', 'next', '', '', ''])
+        expect(allLines(term).slice(0, 12)).toEqual([...history, '$ ls', 'file', '$ ', 'next'])
     })
 
     it('pane shorter than the tab in the alternate screen: the program\'s exit restores the cursor on the shell\'s row', async () => {
@@ -135,6 +138,7 @@ describe('pane redraw in xterm.js', () => {
             cursorY: 1,
             paneWidth: COLS,
             paneHeight: 3,
+            windowHeight: ROWS,
             alternate: { text: ['CLAUDE-1', '> type here', 'status'].join('\n'), savedCursor: { x: 0, y: 2 } },
             modes: { cursorVisible: false, mouseMode: 1002, mouseEncoding: 1006 },
         }
@@ -142,8 +146,10 @@ describe('pane redraw in xterm.js', () => {
         expect(screen(running)).toEqual(['CLAUDE-1', '> type here', 'status', '', '', ''])
         expect(running.buffer.active.cursorY).toBe(1)
         const term = await terminalAfter(renderCapture(shortPane), CLAUDE_EXIT)
-        expect(screen(term)).toEqual(['$ ls', '$ claude', 'Resume this session', '$ ', '', ''])
+        // The exit's new line on the pane's last row scrolls the pane's rows.
+        expect(screen(term)).toEqual(['$ claude', 'Resume this session', '$ ', '', '', ''])
         expect(allLines(term).filter(l => l.startsWith('old'))).toEqual(history)
+        expect(allLines(term)).toContain('$ ls')
     })
 
     it('a clear with no capture after it (the capture failed): normal screen, cursor shown, mouse off', async () => {

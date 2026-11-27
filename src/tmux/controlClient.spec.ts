@@ -209,7 +209,7 @@ describe('TmuxControlClient operations', () => {
         await expect(p).resolves.toBe('x')
     })
 
-    const STATE = '#{cursor_x}|#{cursor_y}|#{pane_width}|#{pane_height}|#{alternate_on}|#{alternate_saved_x}|#{alternate_saved_y}|#{history_size}|#{cursor_flag}|#{mouse_standard_flag}|#{mouse_button_flag}|#{mouse_all_flag}|#{mouse_sgr_flag}|#{mouse_utf8_flag}'
+    const STATE = '#{cursor_x}|#{cursor_y}|#{pane_width}|#{pane_height}|#{alternate_on}|#{alternate_saved_x}|#{alternate_saved_y}|#{history_size}|#{cursor_flag}|#{mouse_standard_flag}|#{mouse_button_flag}|#{mouse_all_flag}|#{mouse_sgr_flag}|#{mouse_utf8_flag}|#{window_height}'
     const FIRST_LINE = `capture-pane -p -e -J -S - -t %5 ; display-message -p -t %5 "${STATE}"\r`
     const SECOND_LINE = 'capture-pane -p -e -J -a -t %5 ; capture-pane -p -e -J -S - -E -1 -t %5 ; ' +
         `capture-pane -p -e -J -t %5 ; display-message -p -t %5 "${STATE}"\r`
@@ -220,9 +220,9 @@ describe('TmuxControlClient operations', () => {
         const p = t.client.captureWithCursor('%5')
         expect(t.writes).toEqual([FIRST_LINE])
         t.respond(['\x1b[1mline one\x1b[0m', 'line two', ''])
-        t.respond(['7|22|182|48|0|4294967295|4294967295|100|1|0|0|0|0|0'])
+        t.respond(['7|22|182|48|0|4294967295|4294967295|100|1|0|0|0|0|0|50'])
         await expect(p).resolves.toEqual({
-            text: '\x1b[1mline one\x1b[0m\nline two\n', cursorX: 7, cursorY: 22, paneWidth: 182, paneHeight: 48,
+            text: '\x1b[1mline one\x1b[0m\nline two\n', cursorX: 7, cursorY: 22, paneWidth: 182, paneHeight: 48, windowHeight: 50,
             modes: DEFAULT_MODES,
         })
         // A pane that is not in the alternate screen needs one line only.
@@ -249,9 +249,9 @@ describe('TmuxControlClient operations', () => {
         const t = new FakeTmux().start()
         const p = t.client.captureWithCursor('%5')
         t.respond(['screen'])
-        t.respond(['3|5|80|24||||||||||'])
+        t.respond(['3|5|80|24|||||||||||'])
         await expect(p).resolves.toEqual({
-            text: 'screen', cursorX: 3, cursorY: 5, paneWidth: 80, paneHeight: 24, modes: DEFAULT_MODES,
+            text: 'screen', cursorX: 3, cursorY: 5, paneWidth: 80, paneHeight: 24, windowHeight: 0, modes: DEFAULT_MODES,
         })
         expect(t.writes).toHaveLength(1)
     })
@@ -274,7 +274,7 @@ describe('TmuxControlClient operations', () => {
         const p = t.client.captureWithCursor('%5')
         t.respond([])
         t.respond(['?'])
-        await expect(p).resolves.toEqual({ text: '', cursorX: 0, cursorY: 0, paneWidth: 0, paneHeight: 0, modes: DEFAULT_MODES })
+        await expect(p).resolves.toEqual({ text: '', cursorX: 0, cursorY: 0, paneWidth: 0, paneHeight: 0, windowHeight: 0, modes: DEFAULT_MODES })
     })
 
     it('captureWithCursor rejects when the capture fails (the cursor query is skipped)', async () => {
@@ -298,9 +298,9 @@ describe('TmuxControlClient operations', () => {
         t.respond(['$ shell', ''])
         t.respond(['history'])
         t.respond(['ALT new', ''])
-        t.respond(['5|0|80|24|1|2|3|1|0|0|1|0|1|0'])
+        t.respond(['5|0|80|24|1|2|3|1|0|0|1|0|1|0|24'])
         await expect(p).resolves.toEqual({
-            text: 'history\n$ shell\n', cursorX: 5, cursorY: 0, paneWidth: 80, paneHeight: 24,
+            text: 'history\n$ shell\n', cursorX: 5, cursorY: 0, paneWidth: 80, paneHeight: 24, windowHeight: 24,
             alternate: { text: 'ALT new\n', savedCursor: { x: 2, y: 3 } },
             modes: { cursorVisible: false, mouseMode: 1002, mouseEncoding: 1006 },
         })
@@ -347,7 +347,7 @@ describe('TmuxControlClient operations', () => {
         t.respond(['$ shell'])
         t.respond(['2|0|80|24|0|4294967295|4294967295|0|1|0|0|0|0|0'])
         await expect(p).resolves.toEqual({
-            text: '$ shell', cursorX: 2, cursorY: 0, paneWidth: 80, paneHeight: 24, modes: DEFAULT_MODES,
+            text: '$ shell', cursorX: 2, cursorY: 0, paneWidth: 80, paneHeight: 24, windowHeight: 0, modes: DEFAULT_MODES,
         })
     })
 
@@ -365,7 +365,7 @@ describe('TmuxControlClient operations', () => {
         t.respond(['ALT again'])
         t.respond(['1|0|80|24|1|0|0|0|0|0|0|0|0|0'])
         await expect(p).resolves.toEqual({
-            text: 'ALT again', cursorX: 1, cursorY: 0, paneWidth: 80, paneHeight: 24,
+            text: 'ALT again', cursorX: 1, cursorY: 0, paneWidth: 80, paneHeight: 24, windowHeight: 0,
             modes: { cursorVisible: false, mouseMode: null, mouseEncoding: null },
         })
         expect(t.writes).toHaveLength(7)
@@ -389,6 +389,23 @@ describe('TmuxControlClient operations', () => {
         expect(t.commands).toEqual(['display-message -p -t %5 "#{cursor_x} #{cursor_y}"'])
         t.respond(['7 22'])
         await expect(p).resolves.toEqual({ x: 7, y: 22 })
+    })
+
+    it('paneBorderStatus reads the window\'s pane-border-status, and anything unknown as off', async () => {
+        const t = new FakeTmux().start()
+        const top = t.client.paneBorderStatus('%5')
+        expect(t.commands).toEqual(['display-message -p -t %5 "#{pane-border-status}"'])
+        t.respond(['top'])
+        await expect(top).resolves.toBe('top')
+        const bottom = t.client.paneBorderStatus('%5')
+        t.respond(['bottom'])
+        await expect(bottom).resolves.toBe('bottom')
+        const off = t.client.paneBorderStatus('%5')
+        t.respond(['off'])
+        await expect(off).resolves.toBe('off')
+        const unknown = t.client.paneBorderStatus('%5')
+        t.respond([''])
+        await expect(unknown).resolves.toBe('off')
     })
 
     it('paneCurrentPath asks tmux for the pane\'s current path', async () => {

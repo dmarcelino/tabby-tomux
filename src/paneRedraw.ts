@@ -15,8 +15,6 @@ const CURSOR_HOME = '\x1b[H'
 const MOUSE_OFF = '\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l'
 /** A terminal's modes before any program changed them: cursor shown, mouse off. */
 export const DEFAULT_MODES: TmuxPaneModes = { cursorVisible: true, mouseMode: null, mouseEncoding: null }
-/** DECSTBM with no rows: the scroll region is the whole screen again (cursor home). */
-const FULL_SCROLL_REGION = '\x1b[r'
 
 /**
  * Clear screen and scrollback, cursor home, default modes: the pane is drawn
@@ -38,10 +36,12 @@ export const CLEAR_SCREEN = LEAVE_ALTERNATE_SCREEN + RESET_STYLE + '\x1b[2J\x1b[
  *
  * The tab shows the pane from its top row: the pane's output places the
  * cursor counting from there. A pane can be shorter than the tab (the window
- * has other panes), so the history and screen are written in a scroll region
- * of the pane's height. The history scrolls out of it into the scrollback and
- * the screen ends on the pane's rows, whatever the tab's height; the tab's
- * rows below the pane stay empty.
+ * has other panes), so each screen gets a scroll region of the pane's height
+ * and keeps it after the redraw. The history scrolls out of it into the
+ * scrollback and the screen ends on the pane's rows, whatever the tab's
+ * height; the tab's rows below the pane stay empty. The pane's output then
+ * scrolls those rows as tmux scrolls the pane (`PaneRowsKeeper` keeps the
+ * region in place).
  *
  * The text style is reset on both sides of each captured text. capture-pane
  * -e assumes it starts from the default style, so a style left on by earlier
@@ -52,15 +52,17 @@ export const CLEAR_SCREEN = LEAVE_ALTERNATE_SCREEN + RESET_STYLE + '\x1b[2J\x1b[
  * makes the default style the one the program's exit restores.
  */
 export function renderCapture (capture: TmuxPaneCapture): string {
-    let out = withinPaneRows(capture.paneHeight, RESET_STYLE + toCrlf(capture.text) + RESET_STYLE)
+    let out = paneRows(capture.paneHeight) + RESET_STYLE + toCrlf(capture.text) + RESET_STYLE
     const alternate = capture.alternate
     if (alternate) {
         if (alternate.savedCursor) {
             out += moveCursor(alternate.savedCursor.x, alternate.savedCursor.y)
         }
         // ESC[?1049h clears the alternate screen but leaves the cursor where
-        // it was: draw the program's screen from the top.
-        out += ENTER_ALTERNATE_SCREEN + CURSOR_HOME + RESET_STYLE + toCrlf(alternate.text) + RESET_STYLE
+        // it was, and gives it the whole screen as its region: draw the
+        // program's screen from the top, in the pane's rows.
+        out += ENTER_ALTERNATE_SCREEN + (paneRows(capture.paneHeight) || CURSOR_HOME) +
+            RESET_STYLE + toCrlf(alternate.text) + RESET_STYLE
     }
     return out + moveCursor(capture.cursorX, capture.cursorY) + renderModes(capture.modes)
 }
@@ -78,13 +80,12 @@ export function renderModes (modes: TmuxPaneModes): string {
 }
 
 /**
- * `text` written from the top row in a scroll region of `height` rows
- * (DECSTBM also homes the cursor), then the full region again. Lines that
- * scroll off a region starting at the top row go to the scrollback. A height
- * of 0 (unknown) writes the text as it is.
+ * A scroll region of the pane's `height` rows from the top row; DECSTBM also
+ * homes the cursor. Lines that scroll off a region starting at the top row go
+ * to the scrollback. Nothing for a height of 0 (unknown).
  */
-function withinPaneRows (height: number, text: string): string {
-    return height > 0 ? `\x1b[1;${height}r` + text + FULL_SCROLL_REGION : text
+function paneRows (height: number): string {
+    return height > 0 ? `\x1b[1;${height}r` : ''
 }
 
 function toCrlf (text: string): string {
