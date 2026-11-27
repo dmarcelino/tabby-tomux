@@ -319,6 +319,50 @@ Same setup and profiles. `tomux-color`'s session had four windows this time. The
 | Open `tomux-nocolor` on its session with windows `@29` and `@30` | Neither tab has a colour, an icon or a header bar. 2 windows, 1 client. |
 | Set the `@32` tab to `#00aa00` as in the first run, quit with the Quit command and start again | `@32` came back green, `@31` and `@33` to `@35` red with the icon, and the `tomux-nocolor` tabs without a colour. All seven windows were still on the host after the quit. |
 
+## Branch claude-exit after merging main, 2026-11-26
+
+Setup: Tabby 1.0.238 on macOS, started with `TOMUX_DEV=1` and driven through its DevTools port, plugin linked to the branch at c56030a (`main` merged into the restore-alternate-screen change, 476 unit tests). `log.txt` showed `tomux plugin loaded`. The Debian test host was not reachable, so the SSH host was the same Mac (`127.0.0.1:22`) with tmux 3.8 and a throwaway session `tomux-merge`, opened by a tomux profile added for this run and removed afterwards. Screens were compared as in the alternate-screen run: the tab's xterm.js state (active buffer, cursor, cursor visibility, mouse tracking mode, every line) against `tmux capture-pane` and `display-message` of the pane, and where noted the whole scrollback against `capture-pane -S -`. Full-screen programs: Claude Code 2.1.332 and the same small script (alternate screen, hidden cursor, mouse modes 1002 and 1006), both exited with `tmux send-keys`.
+
+General checks:
+
+| Check | Result |
+|---|---|
+| Open the profile on a session that does not exist | Session created with one window, bound to the one tab. 1 control client |
+| Typing | `echo "a b  c é \$HOME-x"` arrived as typed. Screen and cursor identical to tmux's |
+| `tmux new-window` from outside, then the real `+` button | One tab each. `+` created one window and selected it |
+| Renames | tmux → tab title. Tab → tmux through `setCustomTitle`, and the custom title was cleared afterwards |
+| Tabby window resized (120x33 → 97x25) | Every window followed. tmux's current window followed the selected tab |
+| User close of a tab | Only that window killed |
+| Quit and start again, every tab shown before the quit | Tabs back in order, each showing its window's history once (whole scrollback identical to tmux's). 1 client |
+| Window killed and window created while Tabby was closed | The killed one did not come back. The new one opened as an extra tab |
+| Control client killed with SIGKILL | Each tab printed "Lost the connection to tmux" and "Press any key to reconnect". A key press reconnected that tab without sending the key to the shell. Each tab reconnects on its own |
+| Profile given a colour and an icon, then `tmux new-window` | The new adopted tab had the colour and the icon |
+
+Alternate screen (the scenarios of task 4.3, run again on the merged build):
+
+| Check | Result |
+|---|---|
+| Claude Code running, Tabby quit and started again | Alternate screen, cursor shown, mouse `any`, screen as tmux's |
+| Then Claude Code exited | Normal screen, whole scrollback identical to tmux's, cursor shown, mouse off |
+| Script running, Tabby restarted, then the script exited | Alternate screen with cursor hidden and mouse `drag`, then normal screen as tmux's with no script text |
+| Plain shell tab after the restart | Normal screen and whole scrollback as tmux's, history once |
+| Reconnect while the script ran, then the script exited | Alternate screen with cursor hidden and mouse `drag` after Reconnect. Normal screen as tmux's after the exit |
+| Control client killed with SIGKILL, script exited, then a key press to reconnect | Normal screen as tmux's, no script text, cursor shown, mouse off. Wheel events scrolled Tabby's scrollback (viewport row 19 → 0) and tmux did not enter copy mode |
+| Second pane, active pane script → shell → script, then B→A→B in one tmux command | Each redraw on the right screen from the top row, with the right cursor visibility and mouse mode. The pane's rows were identical to tmux's, and the tab rows below the smaller pane were empty. The quick switch ended on the shell pane |
+| Claude Code running, Tabby quit, tmux window set to 120x33 by another control client, Tabby started at 92x25 | tmux sized to 92x25 before the capture, alternate screen as tmux's. After Claude Code exited, normal screen and whole scrollback as tmux's, with no Claude Code text |
+
+Bug found, already in the code before this branch (`getRecoveryToken` in `src/components/tomuxTab.component.ts` is unchanged since the first commit): a restored tab that is never shown before Tabby quits again loses its window. Its recovery token is saved without `windowId` (the tab's `windowId` is still null, so the window in its adopt intent is not used). On the next start the restored tab gets a `new` intent, its window opens again as an extra tab, and showing the restored tab creates a new tmux window. Seen with two windows, and confirmed in Tabby's saved `tabsRecovery`.
+
+Setup mistake, not a tomux problem: a first try at the different-size restore set the size with `tmux resize-window`, which sets the window's `window-size` to `manual`, so tmux ignored the client size tomux asked for.
+
+Not checked: tmux older than 3.8, the Debian test host, mouse clicks reaching a program, the empty `tmux -V` retry (the version was read on the first try).
+
+## Restored tab keeps its window until shown (change keep-unshown-tab-window, task 2.2), 2026-11-26
+
+The user ran the change's scenarios in a running Tabby against a real tmux and reported them successful: restart twice without showing a restored tab, kill that tab's window while Tabby is closed, and close an unshown restored tab then reopen it. The details of that run (versions, host, window ids) were not recorded.
+
+Tabs saved by a build without this change have no window id in their token. They come back as new-window tabs once. To avoid that, show or close each restored tab once before quitting Tabby with the new build.
+
 ## Tab order in a second Tabby window (change record-order-other-windows, task 4.2), 2026-11-27
 
 Setup: Tabby 1.0.238 on macOS, started with `TOMUX_DEV=1` and driven through its DevTools port, plugin linked to the change's branch (479 unit tests). `log.txt` showed `tomux plugin loaded`. The SSH host was the same Mac (`127.0.0.1:22`), with tmux 3.8 and a throwaway session `tomux-order` with windows `@152` (`one`, number 0), `@153` (`two`, 1) and `@154` (`three`, 2) and no `@tomux-order`. A tomux profile and an SSH profile for it were added for this run and removed afterwards. Second Tabby windows were opened with `HostAppService.newWindow()`, and reported `isMainWindow: false`. The profile was opened with `ProfilesService.openNewTabForProfile`, as the profile selector does. Tabs were moved with real mouse drags on the tab headers (DevTools mouse events). The main Tabby window also held restored tabs of another session that never connected. Every value was read on the host with `tmux list-windows -F '#{window_id} #{window_index} #{window_name} #{@tomux-order}'`.

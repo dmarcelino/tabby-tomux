@@ -404,6 +404,7 @@ export class TomuxTabComponent extends SSHTabComponent {
             tomuxProfileId: this.tomuxProfile?.id ?? '',
             sessionName: this.sessionName,
             windowId: this.windowId,
+            intent: this.tomuxIntent,
             includeState: !!options?.includeState,
             userClosed: !!this.tomux?.closeIntent.isUserClose(this),
         }) as unknown as RecoveryToken
