@@ -5,7 +5,7 @@ import { dropTerminalReplies, encodeSendKeys, MAX_SEND_KEYS_COMMAND_BYTES } from
 const PANE = '%3'
 
 /**
- * Reverse of sendKeys.ts KEY_MAP (`\n` also maps to Enter; decoded as `\r`).
+ * Reverse of sendKeys.ts KEY_MAP (Enter decodes as `\r`).
  * Arrows, Home and End decode to their normal-mode form; KEY_MAP also accepts
  * the application-cursor-mode form (`ESC O …`).
  */
@@ -79,6 +79,15 @@ describe('encodeSendKeys', () => {
         expect(() => encodeSendKeys('a', '@3')).toThrow(/pane id/)
     })
 
+    it('sends a line feed as a line feed, not as Enter (CR)', () => {
+        // trzsz replies with `#ACT:…\n` lines and reads them in raw mode up
+        // to `\n`; Enter would reach it as `\r` and tsz would hang.
+        const commands = encodeSendKeys('#ACT:eJy\n', PANE)
+        expect(commands).toContain('send-keys -t %3 C-j')
+        expect(commands).not.toContain('send-keys -t %3 Enter')
+        expect(decodeAll(commands)).toBe('#ACT:eJy\n')
+    })
+
     it('keeps both spaces in `echo a b  c` and sends Enter', () => {
         const commands = encodeSendKeys('echo a b  c\r', PANE)
         expect(commands).toEqual([
@@ -103,9 +112,8 @@ describe('encodeSendKeys', () => {
             'send-keys -t %3 C-d',
             'send-keys -t %3 C-z',
         ])
-        // Bare \n is Enter too; other control characters become C-<letter>.
-        expect(encodeSendKeys('\n\x01\x12', PANE)).toEqual([
-            'send-keys -t %3 Enter',
+        // Other control characters become C-<letter>.
+        expect(encodeSendKeys('\x01\x12', PANE)).toEqual([
             'send-keys -t %3 C-a',
             'send-keys -t %3 C-r',
         ])

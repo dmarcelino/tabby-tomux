@@ -497,3 +497,17 @@ The fixes merged into `integration`:
 | #18: new second window, drag there, quit, start, show the restored `int-b` tab | The main window restored its own order (`three`, `two`, `one`) and wrote it |
 
 Not checked in this run: Windows and Linux, the Debian test host, tmux older than 3.8, Claude Code itself (the script stood in for it), password login, Home and End keys, SFTP upload and download, forwarded ports set in the SSH profile, a failed capture, `pane-border-status`, Tabby's Switch profile, and laptop sleep.
+
+## trzsz `tsz` in a tomux tab (line feed sent as C-j), 2026-11-27
+
+Setup: Windows Tabby with the tabby-trzsz plugin, a tomux tab on the `integration` build with the `sendKeys.ts` fix. The remote host runs tsz 1.1.7.
+
+| Check | Result |
+|---|---|
+| `tsz <file>` in a plain SSH tab, and in a plain SSH tab running tmux | Saved to the download folder, before and after the fix |
+| `tsz <file>` in a tomux tab, before the fix | Hung after `::TRZSZ:TRANSFER:S:1.1.7:…`. trzsz's reply line ends in `\n`, which went out as `send-keys Enter` and reached tsz (raw mode) as `\r` |
+| `tsz <file>` in a tomux tab, after the fix | Works (reported by the user) |
+| Local probe: tmux 3.4 control mode, npm `tsz` in the pane, trzsz-js client, tomux's `encodeSendKeys` and `PaneOutputNormalizer` | Hung before the fix. After it, the file arrived byte for byte |
+| tmux 3.4: `send-keys C-j` and `send-keys 0x0a` with `extended-keys` off, on and always, the program asking for modifyOtherKeys | Both reached the program as `\n` in every mode |
+
+Not checked: `trz` (upload), tmux 3.5 or later with extended keys, and pasting LF-only text on Windows into nano or fzf (it now arrives as `\n`, as in a plain SSH tab).
